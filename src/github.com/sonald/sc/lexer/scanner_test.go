@@ -8,20 +8,20 @@ import (
 
 func TestIntConstant(t *testing.T) {
 	src := []byte(`
-	19826;
-	0x19Abe9;
-	0XDEADBEEF;
-	0764523;
-	023.14;
-	7428e153;
-	0xa.1fp20;
-	13.14E520;
+19826;
+0x19Abe9;
+0XDEADBEEF;
+0764523;
+023.14;
+7428e153;
+0xa.1fp20;
+13.14E520;
 
-	// detect wrong const
-	28e153.2;
-	13p12;
-	13p12e5;
-	13e14p520;
+// detect wrong const
+28e153.2;
+13p12;
+13p12e5;
+13e14p520;
 `)
 	s := NewScanner(bytes.NewReader(src))
 

@@ -122,18 +122,26 @@ func (self Token) String() string {
 }
 
 type Scanner struct {
-	start  int64 // start of next possible token
-	offset int64 // total offset in source file
-	lines  int64
-	val    []byte
-	tokens chan Token
-	reader *bufio.Reader
+	start   int64  // start of next token
+	offset  int64  // total offset in source file
+	lines   int    // current line
+	cols    int    // col in a line
+	precols int    // previous col across a line
+	val     []byte // lexical value
+	tokens  chan Token
+	reader  *bufio.Reader
 }
 
 type StateFn func(*Scanner) StateFn
 
 func NewScanner(r io.Reader) *Scanner {
-	s := &Scanner{reader: bufio.NewReader(r), val: make([]byte, 0, 32), tokens: make(chan Token)}
+	s := &Scanner{
+		reader: bufio.NewReader(r),
+		val:    make([]byte, 0, 32),
+		tokens: make(chan Token),
+		lines:  1,
+		cols:   0,
+	}
 	go s.run()
 
 	return s
@@ -178,6 +186,12 @@ func (self *Scanner) next() byte {
 	}
 
 	self.offset++
+	self.cols++
+	if c == '\n' {
+		self.lines++
+		self.precols = self.cols
+		self.cols = 0
+	}
 	self.val = append(self.val, c)
 	return c
 }
@@ -195,9 +209,16 @@ func (self *Scanner) peek() byte {
 }
 
 //unget current byte into stream
-//FIXME: backup can only do once, since UnreadByte can not be called more than once at a time
+//NOTE: backup can only do once, since UnreadByte can not be called
+//more than once consecutively at a time
 func (self *Scanner) backup() {
 	self.offset--
+	if len(self.val) > 0 && self.val[len(self.val)-1] == '\n' {
+		self.lines--
+		self.cols = self.precols
+	} else {
+		self.cols--
+	}
 	self.val = self.val[:len(self.val)-1]
 	self.reader.UnreadByte()
 }
@@ -205,7 +226,7 @@ func (self *Scanner) backup() {
 func (self *Scanner) emit(kd Kind) {
 	tok := Token{
 		Kind:     kd,
-		Location: Location{Offset: self.start},
+		Location: Location{Offset: self.start, Line: self.lines, Column: self.cols - len(self.val)},
 		Value:    Value{string(self.val)},
 	}
 	self.start = 0
