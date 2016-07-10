@@ -1,0 +1,6 @@
+static const int *id, *id2;
+register int global_var;
+
+static const int add(const int *a, const int b);
+
+float kernel[10];

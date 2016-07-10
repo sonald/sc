@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	_ "log"
+	"log"
 	"strconv"
 )
 
@@ -26,7 +26,7 @@ const (
 	RBRACE    // 140
 	COLON     // :
 	COMMA     // ,
-	SEMICOMMA // ;
+	SEMICOLON // ;
 	DOT       // .
 	REFERENCE // ->
 	INC       // --
@@ -78,7 +78,7 @@ const (
 const eof = 255
 
 var keywords map[string]bool
-var tokKinds map[Kind]string
+var TokKinds map[Kind]string
 
 type Location struct {
 	Offset int64
@@ -118,7 +118,7 @@ type Token struct {
 
 func (self Token) String() string {
 	return fmt.Sprintf("{%s, Loc: %v, V: [%s]}",
-		tokKinds[self.Kind], self.Location, self.Value.AsString())
+		TokKinds[self.Kind], self.Location, self.Value.AsString())
 }
 
 type Scanner struct {
@@ -630,7 +630,7 @@ func statePunctuator(self *Scanner) StateFn {
 	case ':':
 		self.emit(COLON)
 	case ';':
-		self.emit(SEMICOMMA)
+		self.emit(SEMICOLON)
 	case '~':
 		self.emit(TILDE)
 	}
@@ -687,7 +687,7 @@ func (self *Scanner) Next() Token {
 }
 
 func init() {
-	fmt.Println("init scanner")
+	log.Println("init scanner")
 	kws := []string{
 		"auto", "break", "case", "char", "const", "continue", "default", "do", "double",
 		"else", "enum", "exetrn", "float", "for", "goto", "if", "inline", "int", "long",
@@ -700,7 +700,7 @@ func init() {
 		keywords[kw] = true
 	}
 
-	tokKinds = map[Kind]string{
+	TokKinds = map[Kind]string{
 		IDENTIFIER:    "IDENTIFIER",
 		KEYWORD:       "KEYWORD",
 		STR_LITERAL:   "STR_LITERAL",
@@ -715,7 +715,7 @@ func init() {
 		RBRACE:        "RBRACE",
 		COLON:         "COLON",
 		COMMA:         "COMMA",
-		SEMICOMMA:     "SEMICOMMA",
+		SEMICOLON:     "SEMICOLON",
 		DOT:           "DOT",
 		REFERENCE:     "REFERENCE",
 		INC:           "INC",

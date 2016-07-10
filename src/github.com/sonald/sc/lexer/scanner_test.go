@@ -41,6 +41,22 @@ func TestIntConstant(t *testing.T) {
 	}
 }
 
+func TestDeclarations(t *testing.T) {
+	src := []byte(`
+int i = 0xdeedbeef;
+const int const *pi = &i;
+static const int vi;
+int main() {
+}`)
+	s := NewScanner(bytes.NewReader(src))
+
+	fmt.Printf("%d %d\n", KEYWORD, IDENTIFIER)
+
+	for tok := s.Next(); tok.Kind != EOT; tok = s.Next() {
+		fmt.Printf("\033[38;5;199mtok: %v\033[00m \n", tok)
+	}
+}
+
 func TestWhole(t *testing.T) {
 	src := []byte(`
 int main() {
