@@ -57,6 +57,7 @@ type SymbolType interface {
 	String() string
 }
 
+// decorate base type with qualifier
 type QualifiedType struct {
 	Base SymbolType
 	Qualifier
@@ -176,14 +177,20 @@ type SymbolScope struct {
 	Children []*SymbolScope
 }
 
-func InitTopScope() *SymbolScope {
-	return nil
+func (scope *SymbolScope) AddSymbol(sym *Symbol) {
+	scope.Symbols = append(scope.Symbols, sym)
 }
 
-func (s *SymbolScope) AddSymbol(name string) *Symbol {
-	return nil
-}
+func (scope *SymbolScope) LookupSymbol(name string) *Symbol {
+	var current = scope
 
-func (s *SymbolScope) LookupSymbol(name string) *Symbol {
+	for ; current != nil; current = current.Parent {
+		for _, sym := range current.Symbols {
+			if sym.Name.AsString() == name {
+				return sym
+			}
+		}
+	}
+
 	return nil
 }

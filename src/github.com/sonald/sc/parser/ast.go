@@ -4,17 +4,28 @@ package parser
 import (
 	"fmt"
 	"github.com/sonald/sc/lexer"
-	_ "reflect"
+	"reflect"
 )
 
 type Ast interface {
 	Repr() string
 }
 
+type AstContext struct {
+	top          *SymbolScope
+	currentScope *SymbolScope
+	types        []SymbolType
+}
+
+type Node struct {
+	ctx *AstContext
+}
+
 type TranslationUnit struct {
+	Node
 	filename  string
-	funcDecls []Ast
-	varDecls  []Ast
+	funcDecls []*FunctionDecl
+	varDecls  []*VariableDecl
 }
 
 func (tu *TranslationUnit) Repr() string {
@@ -27,28 +38,32 @@ type Expression interface {
 }
 
 type IntLiteralExpr struct {
-	tok lexer.Token
+	Node
+	Tok lexer.Token
 }
 
 func (self *IntLiteralExpr) Repr() string {
-	return fmt.Sprintf("%v", self.tok.AsString())
+	return fmt.Sprintf("IntLit(%v)", self.Tok.AsString())
 }
 
 type StringLiteralExpr struct {
-	tok lexer.Token
+	Node
+	Tok lexer.Token
 }
 
 func (self *StringLiteralExpr) Repr() string {
-	return fmt.Sprintf("%v", self.tok.AsString())
+	return fmt.Sprintf("StrLit(%v)", self.Tok.AsString())
 }
 
 type BinaryOperation struct {
-	op       lexer.Token
-	lhs, rhs *Expression
+	Node
+	Op       lexer.Token
+	LHS, RHS *Expression
 }
 
 func (self *BinaryOperation) Repr() string {
-	return fmt.Sprintf("%v", *self)
+	return fmt.Sprintf("BinOp(Op(%s) %v %v)", self.Op.AsString(),
+		self.LHS, self.RHS)
 }
 
 // considered abstract
@@ -56,24 +71,27 @@ type Statement interface {
 	Ast
 }
 
-type ExpressionStatement struct {
-	expr Expression
+type ExpressionStmt struct {
+	Node
+	Expr Expression
 }
 
-func (self *ExpressionStatement) Repr() string {
-	return fmt.Sprintf("%v", *self)
+func (self *ExpressionStmt) Repr() string {
+	return fmt.Sprintf("ExprStmt(%v)", self.Expr)
 }
 
-type VariableDeclaration struct {
-	Sym  *Symbol
+type VariableDecl struct {
+	Node
+	Sym  string
 	init Expression
 }
 
-func (self *VariableDeclaration) Repr() string {
+func (self *VariableDecl) Repr() string {
 	return fmt.Sprintf("VarDecl(%s)", self.Sym)
 }
 
 type Initializer struct {
+	Node
 }
 
 func (self *Initializer) Repr() string {
@@ -81,26 +99,31 @@ func (self *Initializer) Repr() string {
 }
 
 type ParamDecl struct {
-	Sym *Symbol
+	Node
+	Sym string
 }
 
 func (self *ParamDecl) Repr() string {
-	return fmt.Sprintf("ParamDecl(%v)", self.Sym)
+	ty := reflect.TypeOf(self).Elem()
+	return fmt.Sprintf("%s(%v)", ty.Name(), self.Sym)
 }
 
 type FunctionDecl struct {
-	Name *Symbol
-	Args []*ParamDecl
-	body Statement // a *BlockStatement: may be nil if it's external decl
+	Node
+	Name  string
+	Args  []*ParamDecl
+	Body  *CompoundStmt
+	Scope *SymbolScope
 }
 
 func (self *FunctionDecl) Repr() string {
-	var ty = self.Name.Type.(*Function)
+	sym := self.Scope.LookupSymbol(self.Name)
+	var ty = sym.Type.(*Function)
 	var stg = ""
-	if self.Name.Storage != NilStorage {
-		stg = self.Name.Storage.String() + " "
+	if sym.Storage != NilStorage {
+		stg = sym.Storage.String() + " "
 	}
-	var s = fmt.Sprintf("%v%v %v", stg, ty.Return, self.Name.Name.AsString())
+	var s = fmt.Sprintf("FuncDecl(%v%v %v", stg, ty.Return, self.Name)
 
 	s += "("
 	for i, arg := range self.Args {
@@ -109,18 +132,149 @@ func (self *FunctionDecl) Repr() string {
 			s += ", "
 		}
 	}
-	s += ")"
+	s += "))"
 
-	if self.body != nil {
-		s += self.body.Repr()
+	if self.Body != nil {
+		s += self.Body.Repr()
 	}
 	return s
 }
 
-type BlockStatement struct {
-	Stmts []Statement
+type LabelStmt struct {
+	Node
+	Label string
+	Stmt  Statement
 }
 
-func (self *BlockStatement) Repr() string {
+func (self *LabelStmt) Repr() string {
+	ty := reflect.TypeOf(self).Elem()
+	return fmt.Sprintf("%s(%v)", ty.Name(), *self)
+}
+
+type CaseStmt struct {
+	Node
+	ConstExpr Expression
+	Stmt      Statement
+}
+
+func (self *CaseStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type DefaultStmt struct {
+	Node
+	Stmt Statement
+}
+
+func (self *DefaultStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type ReturnStmt struct {
+	Node
+	Stmt Statement
+}
+
+func (self *ReturnStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type IfStmt struct {
+	Node
+	Cond        Expression
+	TrueBranch  Statement
+	FalseBranch Statement
+}
+
+func (self *IfStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type SwitchStmt struct {
+	Node
+	Cond Expression
+	Body Statement
+}
+
+func (self *SwitchStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type WhileStmt struct {
+	Node
+	Cond Expression
+	Body Statement
+}
+
+func (self *WhileStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type DoStmt struct {
+	Node
+	Cond Expression
+	Body Statement
+}
+
+func (self *DoStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type DeclStmt struct {
+	Node
+	Decls []*VariableDecl
+}
+
+func (self *DeclStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+// Decl/Init can not coexists, either one is assigned, the other should be nil
+type ForStmt struct {
+	Node
+	Decl *DeclStmt
+	Init Expression
+
+	Cond Expression
+	Step Expression
+	Body Statement
+}
+
+func (self *ForStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type GotoStmt struct {
+	Node
+	Label string
+}
+
+func (self *GotoStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type ContinueStmt struct {
+	Node
+}
+
+func (self *ContinueStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type BreakStmt struct {
+	Node
+}
+
+func (self *BreakStmt) Repr() string {
+	return fmt.Sprintf("%v", *self)
+}
+
+type CompoundStmt struct {
+	Node
+	Stmts []Statement
+	Scope *SymbolScope
+}
+
+func (self *CompoundStmt) Repr() string {
 	return fmt.Sprintf("%v", *self)
 }

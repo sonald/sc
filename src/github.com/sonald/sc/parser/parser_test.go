@@ -84,4 +84,6 @@ func TestParseFile(t *testing.T) {
 
 	p := NewParser()
 	p.Parse(&opts)
+
+	p.DumpSymbols()
 }

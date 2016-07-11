@@ -5,28 +5,33 @@ import (
 	"github.com/sonald/sc/lexer"
 	"log"
 	"os"
-	_ "reflect"
+	"strings"
 )
 
 const NR_LA = 4
 
 type Parser struct {
-	lex    *lexer.Scanner
-	tokens [NR_LA]lexer.Token // support 4-lookahead
-	cursor int
-	eot    bool // meat EOT
-
-	top   *SymbolScope
-	types []SymbolType
-	tu    *TranslationUnit
+	lex          *lexer.Scanner
+	tokens       [NR_LA]lexer.Token // support 4-lookahead
+	cursor       int
+	eot          bool // meat EOT
+	ctx          *AstContext
+	currentScope *SymbolScope
+	tu           *TranslationUnit
 }
 
 type ParseOption struct {
-	filename string
+	filename    string
+	dumpAst     bool
+	dumpSymbols bool
 }
 
 func NewParser() *Parser {
 	p := &Parser{}
+
+	var top = SymbolScope{}
+	p.ctx = &AstContext{top: &top}
+	p.currentScope = &top
 
 	return p
 }
@@ -206,7 +211,8 @@ func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
 
 func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 	log.Println("parseFunctionParams")
-	var ty = decl.Name.Type.(*Function)
+	funcSym := self.currentScope.LookupSymbol(decl.Name)
+	var ty = funcSym.Type.(*Function)
 	for {
 		if self.peek(0).Kind == lexer.RPAREN {
 			break
@@ -218,10 +224,12 @@ func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 			break
 		} else {
 			switch arg.(type) {
-			case *VariableDeclaration:
-				var pd = &ParamDecl{arg.(*VariableDeclaration).Sym}
+			case *VariableDecl:
+				var pd = &ParamDecl{decl.Node, arg.(*VariableDecl).Sym}
 				decl.Args = append(decl.Args, pd)
-				ty.Args = append(ty.Args, pd.Sym.Type)
+
+				pty := decl.Scope.LookupSymbol(pd.Sym)
+				ty.Args = append(ty.Args, pty.Type)
 				log.Printf("parsed arg %v", pd.Repr())
 			default:
 				self.parseError(self.peek(0), "invalid parameter declaration")
@@ -239,6 +247,7 @@ func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 	log.Println("parseDeclarator")
 	var newSym = Symbol{Type: sym.Type, Storage: sym.Storage}
+	self.AddSymbol(&newSym)
 
 	var decl Ast
 
@@ -263,23 +272,26 @@ func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 		}
 		self.match(lexer.CLOSE_BRACKET)
 
-		decl = &VariableDeclaration{Sym: &newSym}
+		decl = &VariableDecl{Sym: newSym.Name.AsString()}
 
 	case lexer.LPAREN: // func
 		self.match(lexer.LPAREN)
 		var fdecl = &FunctionDecl{}
 		decl = fdecl
 		newSym.Type = &Function{Return: newSym.Type}
-		fdecl.Name = &newSym
+		fdecl.Name = newSym.Name.AsString()
+		// when found definition of func, we need to chain fdecl.Scope with body
+		fdecl.Scope = self.PushScope()
 		self.parseFunctionParams(opts, fdecl)
+		self.PopScope()
 		self.match(lexer.RPAREN)
 
 	default:
-		decl = &VariableDeclaration{Sym: &newSym}
+		decl = &VariableDecl{Sym: newSym.Name.AsString()}
 
 		if self.peek(0).Kind == lexer.EQUAL {
 			// parse initializer
-			//decl.(&VariableDeclaration).init = init
+			//decl.(&VariableDecl).init = init
 		}
 	}
 
@@ -301,12 +313,23 @@ func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
 			break
 		} else {
 			switch decl.(type) {
-			case *VariableDeclaration:
-				self.tu.varDecls = append(self.tu.varDecls, decl)
+			case *VariableDecl:
+				self.tu.varDecls = append(self.tu.varDecls, decl.(*VariableDecl))
 				log.Printf("parsed %v", decl.Repr())
 			case *FunctionDecl:
-				self.tu.funcDecls = append(self.tu.funcDecls, decl)
+				var fdecl = decl.(*FunctionDecl)
+				self.tu.funcDecls = append(self.tu.funcDecls, fdecl)
 				log.Printf("parsed %v", decl.Repr())
+
+				if self.peek(0).Kind == lexer.LBRACE {
+					if self.currentScope != fdecl.Scope.Parent {
+						panic("fdecl should inside currentScope")
+					}
+					self.currentScope = fdecl.Scope
+					fdecl.Body = self.parseCompoundStmt(opts)
+					self.PopScope()
+				}
+
 			default:
 				self.parseError(self.peek(0), "")
 			}
@@ -317,6 +340,91 @@ func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
 		}
 	}
 	return nil
+}
+
+func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
+	var compound = &CompoundStmt{}
+	self.match(lexer.LBRACE)
+
+	for {
+		if self.peek(0).Kind == lexer.RBRACE {
+			break
+		}
+		self.parseStatement(opts)
+	}
+	self.match(lexer.RBRACE)
+	return compound
+}
+
+func (self *Parser) parseStatement(opts *ParseOption) *CompoundStmt {
+	// this condition is a must but not enough
+	tok := self.peek(0)
+	switch tok.Kind {
+	case lexer.KEYWORD:
+		if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
+			self.parseDeclStatement(opts)
+		} else {
+			self.parseStatement(opts)
+		}
+
+	default:
+		if tok.Kind == lexer.IDENTIFIER {
+			// check if typedefed, if so consider it as decl
+		}
+		self.parseStatement(opts)
+	}
+	return nil
+}
+
+func (self *Parser) parseDeclStatement(opts *ParseOption) *CompoundStmt {
+	return nil
+}
+
+func (self *Parser) parseExprStatement(opts *ParseOption) *CompoundStmt {
+	return nil
+
+}
+
+func (self *Parser) PushScope() *SymbolScope {
+	var scope = &SymbolScope{}
+	scope.Parent = self.currentScope
+	self.currentScope.Children = append(self.currentScope.Children, scope)
+
+	self.currentScope = scope
+	return scope
+}
+
+func (self *Parser) PopScope() *SymbolScope {
+	if self.currentScope == self.ctx.top {
+		panic("cannot pop top of the scope chain")
+	}
+
+	var ret = self.currentScope
+	self.currentScope = ret.Parent
+	return ret
+}
+
+func (self *Parser) AddSymbol(sym *Symbol) {
+	self.currentScope.AddSymbol(sym)
+}
+
+func (self *Parser) LookupSymbol(name string) *Symbol {
+	return self.currentScope.LookupSymbol(name)
+}
+
+func (self *Parser) DumpSymbols() {
+	var dumpSymbols func(scope *SymbolScope, level int)
+	dumpSymbols = func(scope *SymbolScope, level int) {
+		for _, sym := range scope.Symbols {
+			fmt.Printf("%s%s\n", strings.Repeat(" ", level*2), sym.Name.AsString())
+		}
+
+		for _, sub := range scope.Children {
+			dumpSymbols(sub, level+1)
+		}
+	}
+
+	dumpSymbols(self.ctx.top, 0)
 }
 
 func init() {
