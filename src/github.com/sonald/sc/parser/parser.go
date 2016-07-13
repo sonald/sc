@@ -3,11 +3,14 @@ package parser
 import (
 	"fmt"
 	"github.com/sonald/sc/lexer"
-	"log"
+	"github.com/sonald/sc/util"
 	"os"
+	"reflect"
+	"runtime"
 	"strings"
 )
 
+//maximum lookaheads
 const NR_LA = 4
 
 type Parser struct {
@@ -18,12 +21,14 @@ type Parser struct {
 	ctx          *AstContext
 	currentScope *SymbolScope
 	tu           *TranslationUnit
+	verbose      bool
 }
 
 type ParseOption struct {
 	filename    string
 	dumpAst     bool
 	dumpSymbols bool
+	verbose     bool // log call trace
 }
 
 func NewParser() *Parser {
@@ -42,7 +47,7 @@ func (self *Parser) peek(n int) lexer.Token {
 	}
 
 	tok := self.tokens[n]
-	log.Printf("peek %s(%s)\n", lexer.TokKinds[tok.Kind], tok.AsString())
+	util.Printf("peek %s(%s)\n", lexer.TokKinds[tok.Kind], tok.AsString())
 	return tok
 }
 
@@ -64,7 +69,7 @@ func (self *Parser) next() lexer.Token {
 		self.tokens[i-1] = self.tokens[i]
 	}
 	self.tokens[NR_LA-1] = self.getNextToken()
-	//log.Printf("next %s(%s)\n", lexer.TokKinds[tok.Kind], tok.AsString())
+	//util.Printf("next %s(%s)\n", lexer.TokKinds[tok.Kind], tok.AsString())
 	return tok
 }
 
@@ -81,7 +86,7 @@ func (self *Parser) match(kd lexer.Kind) {
 // the only entry
 func (self *Parser) Parse(opts *ParseOption) Ast {
 	if f, err := os.Open(opts.filename); err != nil {
-		log.Printf("%s\n", err.Error())
+		util.Printf("%s\n", err.Error())
 		return nil
 	} else {
 		self.lex = lexer.NewScanner(f)
@@ -90,6 +95,8 @@ func (self *Parser) Parse(opts *ParseOption) Ast {
 	for i := range self.tokens {
 		self.tokens[i] = self.getNextToken()
 	}
+
+	self.verbose = opts.verbose
 
 	return self.parseTU(opts)
 }
@@ -126,34 +133,12 @@ func isTypeQualifier(tok lexer.Token) bool {
 }
 
 func (self *Parser) parseError(tok lexer.Token, msg string) {
-	panic(fmt.Sprintf("tok %v, %s", tok, msg))
+	panic(fmt.Sprintf("tok %s(%s), %s", lexer.TokKinds[tok.Kind], tok.AsString(), msg))
 }
 
-/*
-
-external-declaration: function-definition | declaration
-function-definition:
-	declaration-specifiers declarator declaration-list? compound-statement
-declaration-list: declaration+
-
-declaration:
-	declaration-specifiers init-declarator-list? ;
-
-declaration-specifiers:
-	storage-class-specifier declaration-specifiers?
-	type-specifier declaration-specifiers?
-	type-qualifier declaration-specifiers?
-	function-specifier declaration-specifiers?
-
-init-declarator-list: init-declarator
-	init-declarator-list , init-declarator
-
-init-declarator: declarator
-	declarator = initializer
-*/
-
 func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
-	log.Println("parseTypeDecl")
+	defer self.trace("")()
+
 	var ty SymbolType
 
 	for {
@@ -206,11 +191,12 @@ func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
 		}
 	}
 
-	log.Printf("parsed type template %v", sym)
+	util.Printf("parsed type template %v", sym)
 }
 
 func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
-	log.Println("parseFunctionParams")
+	defer self.trace("")()
+
 	funcSym := self.currentScope.LookupSymbol(decl.Name)
 	var ty = funcSym.Type.(*Function)
 	for {
@@ -230,7 +216,7 @@ func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 
 				pty := decl.Scope.LookupSymbol(pd.Sym)
 				ty.Args = append(ty.Args, pty.Type)
-				log.Printf("parsed arg %v", pd.Repr())
+				util.Printf("parsed arg %v", pd.Repr())
 			default:
 				self.parseError(self.peek(0), "invalid parameter declaration")
 			}
@@ -245,7 +231,8 @@ func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 //FIXME: support full c99 declarator parsing
 //FIXME: check redeclaration
 func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
-	log.Println("parseDeclarator")
+	defer self.trace("")()
+
 	var newSym = Symbol{Type: sym.Type, Storage: sym.Storage}
 	self.AddSymbol(&newSym)
 
@@ -299,7 +286,7 @@ func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 }
 
 func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
-	log.Println("parseExternalDecl")
+	defer self.trace("")()
 
 	var tmpl = &Symbol{}
 	self.parseTypeDecl(opts, tmpl)
@@ -315,11 +302,11 @@ func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
 			switch decl.(type) {
 			case *VariableDecl:
 				self.tu.varDecls = append(self.tu.varDecls, decl.(*VariableDecl))
-				log.Printf("parsed %v", decl.Repr())
+				util.Printf("parsed %v", decl.Repr())
 			case *FunctionDecl:
 				var fdecl = decl.(*FunctionDecl)
 				self.tu.funcDecls = append(self.tu.funcDecls, fdecl)
-				log.Printf("parsed %v", decl.Repr())
+				util.Printf("parsed %v", decl.Repr())
 
 				if self.peek(0).Kind == lexer.LBRACE {
 					if self.currentScope != fdecl.Scope.Parent {
@@ -328,6 +315,9 @@ func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
 					self.currentScope = fdecl.Scope
 					fdecl.Body = self.parseCompoundStmt(opts)
 					self.PopScope()
+
+					// parse of function definition done
+					goto done
 				}
 
 			default:
@@ -339,50 +329,206 @@ func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
 			self.next()
 		}
 	}
+
+done:
 	return nil
 }
 
 func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
-	var compound = &CompoundStmt{}
+	defer self.trace("")()
+	var scope = self.PushScope()
+	var compound = &CompoundStmt{Node: Node{self.ctx}, Scope: scope}
+
 	self.match(lexer.LBRACE)
 
 	for {
 		if self.peek(0).Kind == lexer.RBRACE {
 			break
 		}
-		self.parseStatement(opts)
+		compound.Stmts = append(compound.Stmts, self.parseStatement(opts))
 	}
 	self.match(lexer.RBRACE)
+	self.PopScope()
 	return compound
 }
 
-func (self *Parser) parseStatement(opts *ParseOption) *CompoundStmt {
-	// this condition is a must but not enough
+func (self *Parser) parseStatement(opts *ParseOption) Statement {
+	defer self.trace("")()
 	tok := self.peek(0)
+
+	var stmt Statement
+	// all normal statements
+
+	// else
 	switch tok.Kind {
 	case lexer.KEYWORD:
+		//FIXME: handle typedef usertype decl
 		if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
-			self.parseDeclStatement(opts)
+			stmt = self.parseDeclStatement(opts)
 		} else {
-			self.parseStatement(opts)
+			stmt = self.parseExprStatement(opts)
 		}
 
 	default:
-		if tok.Kind == lexer.IDENTIFIER {
-			// check if typedefed, if so consider it as decl
+		stmt = self.parseExprStatement(opts)
+	}
+
+	util.Printf("parsed %s\n", stmt.Repr())
+	return stmt
+}
+
+func (self *Parser) parseDeclStatement(opts *ParseOption) *DeclStmt {
+	defer self.trace("")()
+
+	var declStmt = &DeclStmt{Node: Node{self.ctx}}
+
+	var tmpl = &Symbol{}
+	self.parseTypeDecl(opts, tmpl)
+	for {
+		if self.peek(0).Kind == lexer.SEMICOLON {
+			self.next()
+			break
 		}
-		self.parseStatement(opts)
+
+		if decl := self.parseDeclarator(opts, tmpl); decl == nil {
+			break
+		} else {
+			switch decl.(type) {
+			case *VariableDecl:
+				declStmt.Decls = append(declStmt.Decls, decl.(*VariableDecl))
+				util.Printf("parsed %v", decl.Repr())
+
+			default:
+				self.parseError(self.peek(0), "invalid declaration inside block")
+			}
+		}
+
+		if self.peek(0).Kind == lexer.COMMA {
+			self.next()
+		}
+	}
+
+	return declStmt
+}
+
+func (self *Parser) parseExprStatement(opts *ParseOption) *ExprStmt {
+	defer self.trace("")()
+	var exprStmt = &ExprStmt{Node: Node{self.ctx}}
+	expr := self.parseExpression(opts, 0)
+	self.match(lexer.SEMICOLON)
+	exprStmt.Expr = expr
+
+	return exprStmt
+}
+
+type Associativity int
+type Pred int
+type Arity int
+
+const (
+	NoAssoc Associativity = 0 << iota
+	RightAssoc
+	LeftAssoc
+)
+
+const (
+	NoneArity = 0
+	Unary     = 1
+	Binary    = 2
+	Ternary   = 3
+)
+
+// one token may be used ad prefix or postfix/infix, so we need two Precedences for a token
+type operation struct {
+	lexer.Token
+	Associativity
+	NudPred int
+	LedPred int
+	nud     func(p *Parser, op *operation) Expression
+	led     func(p *Parser, lhs Expression, op *operation) Expression
+}
+
+// operation templates
+var operations map[lexer.Kind]*operation
+
+// alloc new operation by copying specific template
+func newOperation(tok lexer.Token) *operation {
+	var op = *operations[tok.Kind]
+	op.Token = tok
+	return &op
+}
+
+// for binary op
+//
+func binop_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+	p.next() // eat op
+	rhs := p.parseExpression(nil, op.LedPred)
+
+	var expr = &BinaryOperation{Node{p.ctx}, op.Token.Kind, lhs, rhs}
+	util.Printf("parsed %v", expr.Repr())
+	return expr
+}
+
+// for unary (including prefix)
+func unaryop_nud(p *Parser, op *operation) Expression {
+	defer p.trace("")()
+	p.next()
+	// op.Pred is wrong, need prefix pred
+	var expr = p.parseExpression(nil, op.NudPred)
+	return &UnaryOperation{Node{p.ctx}, op.Kind, false, expr}
+}
+
+// for postfix
+func unaryop_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+	return nil
+}
+
+// end of expr
+func expr_led(p *Parser, lhs Expression, op *operation) Expression {
+	return nil
+}
+
+// for ID
+func id_nud(p *Parser, op *operation) Expression {
+	defer p.trace("")()
+	p.next()
+	return &DeclRefExpr{Node{p.ctx}, op.Token.AsString()}
+}
+
+// for Literal (int, float, string, char...)
+func literal_nud(p *Parser, op *operation) Expression {
+	defer p.trace("")()
+	p.next()
+	switch op.Kind {
+	case lexer.INT_LITERAL:
+		return &IntLiteralExpr{Node: Node{p.ctx}, Tok: op.Token}
+	case lexer.STR_LITERAL:
+		return &StringLiteralExpr{Node: Node{p.ctx}, Tok: op.Token}
+	case lexer.CHAR_LITERAL:
+		return &CharLiteralExpr{Node: Node{p.ctx}, Tok: op.Token}
 	}
 	return nil
 }
 
-func (self *Parser) parseDeclStatement(opts *ParseOption) *CompoundStmt {
-	return nil
-}
+func (self *Parser) parseExpression(opts *ParseOption, rbp int) Expression {
+	defer self.trace("")()
 
-func (self *Parser) parseExprStatement(opts *ParseOption) *CompoundStmt {
-	return nil
+	if self.peek(0).Kind == lexer.SEMICOLON {
+		return nil
+	}
 
+	operand := newOperation(self.peek(0))
+	lhs := operand.nud(self, operand)
+
+	op := newOperation(self.peek(0))
+	for rbp < op.LedPred {
+		lhs = op.led(self, lhs, op)
+		op = newOperation(self.peek(0))
+	}
+
+	return lhs
 }
 
 func (self *Parser) PushScope() *SymbolScope {
@@ -412,6 +558,7 @@ func (self *Parser) LookupSymbol(name string) *Symbol {
 	return self.currentScope.LookupSymbol(name)
 }
 
+// this is useless, need to trace symbol hierachy from TU
 func (self *Parser) DumpSymbols() {
 	var dumpSymbols func(scope *SymbolScope, level int)
 	dumpSymbols = func(scope *SymbolScope, level int) {
@@ -427,8 +574,168 @@ func (self *Parser) DumpSymbols() {
 	dumpSymbols(self.ctx.top, 0)
 }
 
+func (self *Parser) DumpAst() {
+	var top Ast = self.tu
+	var stack int = 0
+	var scope *SymbolScope
+
+	fmt.Println("DumpAst")
+	var visit func(Ast)
+	var log = func(msg string) {
+		fmt.Printf("%s%s\n", strings.Repeat("  ", stack), msg)
+	}
+
+	visit = func(ast Ast) {
+		switch ast.(type) {
+		case *TranslationUnit:
+			tu := ast.(*TranslationUnit)
+			scope = self.ctx.top
+			for _, d := range tu.funcDecls {
+				stack++
+				visit(d)
+				stack--
+			}
+			for _, d := range tu.varDecls {
+				stack++
+				visit(d)
+				stack--
+			}
+
+		case *IntLiteralExpr:
+			e := ast.(*IntLiteralExpr)
+			log(e.Repr())
+
+		case *CharLiteralExpr:
+			e := ast.(*CharLiteralExpr)
+			log(e.Repr())
+
+		case *StringLiteralExpr:
+			e := ast.(*StringLiteralExpr)
+			log(e.Repr())
+
+		case *BinaryOperation:
+			var (
+				e  = ast.(*BinaryOperation)
+				ty = reflect.TypeOf(e).Elem()
+			)
+			log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
+			stack++
+			visit(e.LHS)
+			visit(e.RHS)
+			stack--
+
+		case *DeclRefExpr:
+			e := ast.(*DeclRefExpr)
+			log(e.Repr())
+
+		case *UnaryOperation:
+			var (
+				e  = ast.(*UnaryOperation)
+				ty = reflect.TypeOf(e).Elem()
+			)
+			log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
+			stack++
+			visit(e.expr)
+			stack--
+
+		case *ConditionalOperation:
+		case *ExprStmt:
+			e := ast.(*ExprStmt)
+			ty := reflect.TypeOf(e).Elem()
+			log(fmt.Sprintf("%s", ty.Name()))
+			stack++
+			visit(e.Expr)
+			stack--
+
+		case *VariableDecl:
+			e := ast.(*VariableDecl)
+			sym := scope.LookupSymbol(e.Sym)
+
+			log(fmt.Sprintf("VarDecl(%s)", sym))
+			if e.init != nil {
+				stack++
+				visit(e.init)
+				stack--
+			}
+
+		case *Initializer:
+		case *ParamDecl:
+			e := ast.(*ParamDecl)
+			sym := scope.LookupSymbol(e.Sym)
+			ty := reflect.TypeOf(e).Elem()
+			log(fmt.Sprintf("%s(%v)", ty.Name(), sym))
+
+		case *FunctionDecl:
+			e := ast.(*FunctionDecl)
+			scope = e.Scope
+			sym := scope.LookupSymbol(e.Name)
+			log(fmt.Sprintf("FuncDecl(%v)", sym))
+
+			stack++
+			for _, arg := range e.Args {
+				visit(arg)
+			}
+			stack--
+
+			if e.Body != nil {
+				visit(e.Body)
+			}
+
+		case *LabelStmt:
+		case *CaseStmt:
+		case *DefaultStmt:
+		case *ReturnStmt:
+		case *IfStmt:
+		case *SwitchStmt:
+		case *WhileStmt:
+		case *DoStmt:
+		case *DeclStmt:
+			e := ast.(*DeclStmt)
+			log("DeclStmt")
+			stack++
+			for _, stmt := range e.Decls {
+				visit(stmt)
+			}
+			stack--
+
+		case *ForStmt:
+		case *GotoStmt:
+		case *ContinueStmt:
+		case *BreakStmt:
+		case *CompoundStmt:
+			e := ast.(*CompoundStmt)
+			scope = e.Scope
+			log("CompoundStmt")
+			stack++
+			for _, stmt := range e.Stmts {
+				visit(stmt)
+			}
+			stack--
+
+		default:
+			break
+		}
+	}
+
+	visit(top)
+}
+
+func (self *Parser) trace(msg string) func() {
+	var __func__ string
+	if self.verbose {
+		pc, _, _, _ := runtime.Caller(1)
+		__func__ = runtime.FuncForPC(pc).Name()
+		util.Printf(util.Parser, util.Debug, "Enter %s: %s\n", __func__, msg)
+	}
+	return func() {
+		if self.verbose {
+			util.Printf(util.Parser, util.Debug, "Exit %s: %s\n", __func__, msg)
+		}
+	}
+}
+
 func init() {
-	log.Println("init parser")
+	util.Println(util.Parser, util.Debug, "init parser")
 
 	storages = make(map[string]Storage)
 	storages["auto"] = Auto
@@ -448,4 +755,74 @@ func init() {
 	typeQualifier["const"] = Const
 	typeQualifier["restrict"] = Restrict
 	typeQualifier["volatile"] = Volatile
+
+	operations = make(map[lexer.Kind]*operation)
+
+	// make , right assoc, so evaluation begins from leftmost expr
+	operations[lexer.COMMA] = &operation{lexer.Token{}, LeftAssoc, -1, 10, nil, binop_led}
+
+	operations[lexer.ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.MUL_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.DIV_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.MOD_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.PLUS_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.MINUS_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.LSHIFT_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.RSHIFT_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.AND_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.OR_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.XOR_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+
+	//?:
+	operations[lexer.QUEST] = &operation{lexer.Token{}, RightAssoc, -1, 30, nil, nil}
+
+	operations[lexer.LOG_OR] = &operation{lexer.Token{}, LeftAssoc, -1, 40, nil, nil}
+	operations[lexer.LOG_AND] = &operation{lexer.Token{}, LeftAssoc, -1, 50, nil, nil}
+
+	operations[lexer.OR] = &operation{lexer.Token{}, LeftAssoc, -1, 60, nil, nil}
+	operations[lexer.XOR] = &operation{lexer.Token{}, LeftAssoc, -1, 70, nil, nil}
+	operations[lexer.AND] = &operation{lexer.Token{}, LeftAssoc, 150, 80, nil, nil}
+
+	operations[lexer.EQUAL] = &operation{lexer.Token{}, LeftAssoc, -1, 90, nil, nil}
+	operations[lexer.NE] = &operation{lexer.Token{}, LeftAssoc, -1, 90, nil, nil}
+
+	// >, <, <=, >=
+	operations[lexer.GREAT] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
+	operations[lexer.LESS] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
+	operations[lexer.GE] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
+	operations[lexer.LE] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
+
+	operations[lexer.LSHIFT] = &operation{lexer.Token{}, LeftAssoc, -1, 110, nil, nil}
+	operations[lexer.RSHIFT] = &operation{lexer.Token{}, LeftAssoc, -1, 110, nil, nil}
+
+	operations[lexer.MINUS] = &operation{lexer.Token{}, LeftAssoc, 150, 120, unaryop_nud, binop_led}
+	operations[lexer.PLUS] = &operation{lexer.Token{}, LeftAssoc, 150, 120, unaryop_nud, binop_led}
+
+	operations[lexer.MUL] = &operation{lexer.Token{}, LeftAssoc, 150, 130, unaryop_nud, binop_led}
+	operations[lexer.DIV] = &operation{lexer.Token{}, LeftAssoc, -1, 130, nil, binop_led}
+	operations[lexer.MOD] = &operation{lexer.Token{}, LeftAssoc, -1, 130, nil, binop_led}
+
+	// cast
+	// NOTE: ( can appear at a lot of places: primary (expr), postfix (type){initlist}, postif func()
+	// need special take-care
+	operations[lexer.LPAREN] = &operation{lexer.Token{}, LeftAssoc, -1, 140, nil, binop_led}
+
+	// unary !, ~
+	operations[lexer.NOT] = &operation{lexer.Token{}, LeftAssoc, -1, 150, nil, binop_led}
+	operations[lexer.TILDE] = &operation{lexer.Token{}, LeftAssoc, -1, 150, nil, binop_led}
+	// &, *, +, - is assigned beforehand
+
+	// prefix and postfix
+	operations[lexer.INC] = &operation{lexer.Token{}, LeftAssoc, 150, 160, unaryop_nud, unaryop_led}
+	operations[lexer.DEC] = &operation{lexer.Token{}, LeftAssoc, 150, 160, unaryop_nud, unaryop_led}
+
+	operations[lexer.OPEN_BRACKET] = &operation{lexer.Token{}, LeftAssoc, -1, 160, unaryop_nud, unaryop_led}
+	operations[lexer.DOT] = &operation{lexer.Token{}, LeftAssoc, -1, 160, unaryop_nud, unaryop_led}
+	operations[lexer.REFERENCE] = &operation{lexer.Token{}, LeftAssoc, -1, 160, unaryop_nud, unaryop_led}
+
+	operations[lexer.INT_LITERAL] = &operation{lexer.Token{}, NoAssoc, 200, -1, literal_nud, nil}
+	operations[lexer.STR_LITERAL] = &operation{lexer.Token{}, NoAssoc, 200, -1, literal_nud, nil}
+	operations[lexer.IDENTIFIER] = &operation{lexer.Token{}, NoAssoc, 200, -1, id_nud, nil}
+
+	operations[lexer.SEMICOLON] = &operation{lexer.Token{}, NoAssoc, -1, -1, nil, expr_led}
 }

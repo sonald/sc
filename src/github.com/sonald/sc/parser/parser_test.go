@@ -80,10 +80,15 @@ func TestParseTokens(t *testing.T) {
 func TestParseFile(t *testing.T) {
 	opts := ParseOption{
 		filename: "./test.txt",
+		verbose:  true,
 	}
 
 	p := NewParser()
 	p.Parse(&opts)
 
-	p.DumpSymbols()
+	p.DumpAst()
+
+	if opts.dumpSymbols {
+		p.DumpSymbols()
+	}
 }

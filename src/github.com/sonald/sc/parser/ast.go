@@ -29,7 +29,8 @@ type TranslationUnit struct {
 }
 
 func (tu *TranslationUnit) Repr() string {
-	return fmt.Sprintf("%v", *tu)
+	ty := reflect.TypeOf(tu).Elem()
+	return fmt.Sprintf("%s(%s)", ty.Name(), tu.filename)
 }
 
 // considered abstract
@@ -46,6 +47,15 @@ func (self *IntLiteralExpr) Repr() string {
 	return fmt.Sprintf("IntLit(%v)", self.Tok.AsString())
 }
 
+type CharLiteralExpr struct {
+	Node
+	Tok lexer.Token
+}
+
+func (self *CharLiteralExpr) Repr() string {
+	return fmt.Sprintf("CharLit(%v)", self.Tok.AsString())
+}
+
 type StringLiteralExpr struct {
 	Node
 	Tok lexer.Token
@@ -57,27 +67,79 @@ func (self *StringLiteralExpr) Repr() string {
 
 type BinaryOperation struct {
 	Node
-	Op       lexer.Token
-	LHS, RHS *Expression
+	Op       lexer.Kind
+	LHS, RHS Expression
 }
 
 func (self *BinaryOperation) Repr() string {
-	return fmt.Sprintf("BinOp(Op(%s) %v %v)", self.Op.AsString(),
-		self.LHS, self.RHS)
+	var (
+		ty  = reflect.TypeOf(self).Elem()
+		ty2 = reflect.TypeOf(self.LHS).Elem()
+		ty3 = reflect.TypeOf(self.RHS).Elem()
+	)
+	return fmt.Sprintf("%s(Op(%s) %v %v)", ty.Name(), lexer.TokKinds[self.Op],
+		ty2.Name(), ty3.Name())
 }
+
+type DeclRefExpr struct {
+	Node
+	Name string // symbol name for declaration
+}
+
+func (self *DeclRefExpr) Repr() string {
+	ty := reflect.TypeOf(self).Elem()
+	return fmt.Sprintf("%s(%s)", ty.Name(), self.Name)
+}
+
+type UnaryOperation struct {
+	Node
+	Op      lexer.Kind
+	Postfix bool // false if prefix, true postfix. eg ++, --
+	expr    Expression
+}
+
+func (self *UnaryOperation) Repr() string {
+	ty := reflect.TypeOf(self).Elem()
+	ts := lexer.TokKinds[self.Op]
+	if self.Postfix {
+		return fmt.Sprintf("%s(Postfix(%s) %s)", ty.Name(), self.expr, ts)
+	} else {
+		return fmt.Sprintf("%s(%s %s)", ty.Name(), ts, self.expr)
+	}
+}
+
+type ConditionalOperation struct {
+	Node
+	Cond  Expression
+	True  Expression
+	False Expression
+}
+
+func (self *ConditionalOperation) Repr() string {
+	var (
+		ty  = reflect.TypeOf(self).Elem()
+		ty2 = reflect.TypeOf(self.Cond).Elem()
+		ty3 = reflect.TypeOf(self.True).Elem()
+		ty4 = reflect.TypeOf(self.False).Elem()
+	)
+	return fmt.Sprintf("%s(Cond(%s) %v %v)", ty.Name(), ty2.Name(), ty3.Name(), ty4.Name())
+}
+
+//--------------------------------------------------------------------------------
 
 // considered abstract
 type Statement interface {
 	Ast
 }
 
-type ExpressionStmt struct {
+type ExprStmt struct {
 	Node
 	Expr Expression
 }
 
-func (self *ExpressionStmt) Repr() string {
-	return fmt.Sprintf("ExprStmt(%v)", self.Expr)
+func (self *ExprStmt) Repr() string {
+	ty := reflect.TypeOf(self).Elem()
+	return fmt.Sprintf("%s(%s)", ty.Name(), self.Expr.Repr())
 }
 
 type VariableDecl struct {
@@ -226,7 +288,7 @@ type DeclStmt struct {
 }
 
 func (self *DeclStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
+	return fmt.Sprintf("DeclStmt(%d vars)", len(self.Decls))
 }
 
 // Decl/Init can not coexists, either one is assigned, the other should be nil

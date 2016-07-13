@@ -4,3 +4,11 @@ register int global_var;
 static const int add(const int *a, const int b);
 
 float kernel[10];
+
+int foo(int a, int b)
+{
+    int a;
+    10 * 20 / 21 - 30 + 40;
+
+}
+
