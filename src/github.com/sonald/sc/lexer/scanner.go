@@ -451,16 +451,12 @@ func statePunctuator(self *Scanner) StateFn {
 			if self.peek() == '=' {
 				self.next()
 				self.emit(RSHIFT_ASSIGN)
-			} else if isPunctuatorPrefix(self.peek()) {
-				self.emit(ERROR)
 			} else {
 				self.emit(RSHIFT)
 			}
 		} else if self.peek() == '=' {
 			self.next()
 			self.emit(GE)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		} else {
 			self.emit(GREAT)
 		}
@@ -470,16 +466,12 @@ func statePunctuator(self *Scanner) StateFn {
 			if self.peek() == '=' {
 				self.next()
 				self.emit(LSHIFT_ASSIGN)
-			} else if isPunctuatorPrefix(self.peek()) {
-				self.emit(ERROR)
 			} else {
 				self.emit(LSHIFT)
 			}
 		} else if self.peek() == '=' {
 			self.next()
 			self.emit(LE)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		} else {
 			self.emit(LESS)
 		}
@@ -488,8 +480,6 @@ func statePunctuator(self *Scanner) StateFn {
 		if self.peek() == '=' {
 			self.next()
 			self.emit(EQUAL)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		} else {
 			self.emit(ASSIGN)
 		}
@@ -498,8 +488,6 @@ func statePunctuator(self *Scanner) StateFn {
 		if self.peek() == '=' {
 			self.next()
 			self.emit(XOR_ASSIGN)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		} else {
 			self.emit(XOR)
 		}
@@ -507,8 +495,6 @@ func statePunctuator(self *Scanner) StateFn {
 		if self.peek() == '=' {
 			self.next()
 			self.emit(MOD_ASSIGN)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		} else {
 			self.emit(MOD)
 		}
@@ -516,8 +502,6 @@ func statePunctuator(self *Scanner) StateFn {
 		if self.peek() == '=' {
 			self.next()
 			self.emit(MUL_ASSIGN)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		} else {
 			self.emit(MUL)
 		}
@@ -525,8 +509,6 @@ func statePunctuator(self *Scanner) StateFn {
 		if self.peek() == '=' {
 			self.next()
 			self.emit(DIV_ASSIGN)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		} else {
 			self.emit(DIV)
 		}
@@ -534,8 +516,6 @@ func statePunctuator(self *Scanner) StateFn {
 		if self.peek() == '=' {
 			self.next()
 			self.emit(NE)
-		} else if isPunctuatorPrefix(self.peek()) {
-			self.emit(ERROR)
 		}
 
 	case '|':
@@ -546,11 +526,7 @@ func statePunctuator(self *Scanner) StateFn {
 			self.emit(OR_ASSIGN)
 		default:
 			self.backup()
-			if isPunctuatorPrefix(self.peek()) {
-				self.emit(ERROR)
-			} else {
-				self.emit(OR)
-			}
+			self.emit(OR)
 		}
 	case '&':
 		switch self.next() {
@@ -560,11 +536,7 @@ func statePunctuator(self *Scanner) StateFn {
 			self.emit(AND_ASSIGN)
 		default:
 			self.backup()
-			if isPunctuatorPrefix(self.peek()) {
-				self.emit(ERROR)
-			} else {
-				self.emit(AND)
-			}
+			self.emit(AND)
 		}
 	case '-':
 		switch self.next() {
@@ -576,11 +548,7 @@ func statePunctuator(self *Scanner) StateFn {
 			self.emit(MINUS_ASSIGN)
 		default:
 			self.backup()
-			if isPunctuatorPrefix(self.peek()) {
-				self.emit(ERROR)
-			} else {
-				self.emit(MINUS)
-			}
+			self.emit(MINUS)
 		}
 
 	case '+':
@@ -591,11 +559,7 @@ func statePunctuator(self *Scanner) StateFn {
 			self.emit(PLUS_ASSIGN)
 		default:
 			self.backup()
-			if isPunctuatorPrefix(self.peek()) {
-				self.emit(ERROR)
-			} else {
-				self.emit(PLUS)
-			}
+			self.emit(PLUS)
 		}
 
 	case '{':

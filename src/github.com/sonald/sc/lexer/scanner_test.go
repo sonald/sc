@@ -66,6 +66,9 @@ int main() {
 	int ival = 19826;
 	/* definition */
 	int a, b; // line comment
+	++a -+b;
+	a && b || (b+2);
+	a += --b + --a;
 	return  (a>=b) || ((a<<=1) & b) !=0;
 }`)
 	s := NewScanner(bytes.NewReader(src))
@@ -73,6 +76,9 @@ int main() {
 	fmt.Printf("%d %d\n", KEYWORD, IDENTIFIER)
 
 	for tok := s.Next(); tok.Kind != EOT; tok = s.Next() {
+		if tok.Kind == ERROR {
+			t.Fatalf("shouldn't be an error here [%v]", tok)
+		}
 		fmt.Printf("\033[38;5;199mtok: %v\033[00m \n", tok)
 	}
 }
