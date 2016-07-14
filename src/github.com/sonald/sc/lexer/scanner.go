@@ -122,14 +122,15 @@ func (self Token) String() string {
 }
 
 type Scanner struct {
-	start   int64  // start of next token
-	offset  int64  // total offset in source file
-	lines   int    // current line
-	cols    int    // col in a line
-	precols int    // previous col across a line
-	val     []byte // lexical value
-	tokens  chan Token
-	reader  *bufio.Reader
+	start       int64  // start of next token
+	offset      int64  // total offset in source file
+	lines       int    // current line
+	cols        int    // col in a line
+	precols     int    // previous col across a line
+	val         []byte // lexical value
+	tokens      chan Token
+	reader      *bufio.Reader
+	EmitComment bool
 }
 
 type StateFn func(*Scanner) StateFn
@@ -405,7 +406,10 @@ func stateLineComment(self *Scanner) StateFn {
 			break
 		}
 	}
-	self.emit(LINE_COMMENT)
+
+	if self.EmitComment {
+		self.emit(LINE_COMMENT)
+	}
 	return start
 }
 
@@ -425,7 +429,9 @@ func stateBlockComment(self *Scanner) StateFn {
 		}
 	}
 	self.val = self.val[:len(self.val)-2]
-	self.emit(BLOCK_COMMENT)
+	if self.EmitComment {
+		self.emit(BLOCK_COMMENT)
+	}
 	return start
 }
 
@@ -516,6 +522,8 @@ func statePunctuator(self *Scanner) StateFn {
 		if self.peek() == '=' {
 			self.next()
 			self.emit(NE)
+		} else {
+			self.emit(NOT)
 		}
 
 	case '|':

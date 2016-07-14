@@ -13,6 +13,8 @@ import (
 //maximum lookaheads
 const NR_LA = 4
 
+type ParsingContext int
+
 type Parser struct {
 	lex          *lexer.Scanner
 	tokens       [NR_LA]lexer.Token // support 4-lookahead
@@ -411,14 +413,12 @@ func (self *Parser) parseDeclStatement(opts *ParseOption) *DeclStmt {
 	return declStmt
 }
 
-func (self *Parser) parseExprStatement(opts *ParseOption) *ExprStmt {
+func (self *Parser) parseExprStatement(opts *ParseOption) Expression {
 	defer self.trace("")()
-	var exprStmt = &ExprStmt{Node: Node{self.ctx}}
 	expr := self.parseExpression(opts, 0)
 	self.match(lexer.SEMICOLON)
-	exprStmt.Expr = expr
 
-	return exprStmt
+	return expr
 }
 
 type Associativity int
@@ -459,9 +459,10 @@ func newOperation(tok lexer.Token) *operation {
 }
 
 // for binary op
-//
+// handle comma carefully
 func binop_led(p *Parser, lhs Expression, op *operation) Expression {
 	defer p.trace("")()
+
 	p.next() // eat op
 	rhs := p.parseExpression(nil, op.LedPred)
 
@@ -470,17 +471,105 @@ func binop_led(p *Parser, lhs Expression, op *operation) Expression {
 	return expr
 }
 
+func assign_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+
+	p.next() // eat op
+	rhs := p.parseExpression(nil, op.LedPred)
+
+	var expr = &CompoundAssignExpr{Node{p.ctx}, op.Token.Kind, lhs, rhs}
+	util.Printf("parsed %v", expr.Repr())
+	return expr
+}
+
+// ?:
+func condop_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+	var expr = &ConditionalOperation{Node: Node{p.ctx}}
+
+	expr.Cond = lhs
+
+	p.next() // eat ?
+	expr.True = p.parseExpression(nil, op.LedPred)
+	p.match(lexer.COLON) // eat :
+
+	expr.False = p.parseExpression(nil, op.LedPred)
+
+	util.Printf("parsed %v", expr.Repr())
+	return expr
+}
+
 // for unary (including prefix)
 func unaryop_nud(p *Parser, op *operation) Expression {
 	defer p.trace("")()
 	p.next()
-	// op.Pred is wrong, need prefix pred
 	var expr = p.parseExpression(nil, op.NudPred)
 	return &UnaryOperation{Node{p.ctx}, op.Kind, false, expr}
 }
 
 // for postfix
 func unaryop_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+	p.next()
+
+	return &UnaryOperation{Node{p.ctx}, op.Kind, true, lhs}
+}
+
+// e1.e2  e1->e2
+func member_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+	p.next()
+
+	var expr = &MemberExpr{Node: Node{p.ctx}}
+	expr.Target = lhs
+	expr.Member = p.parseExpression(nil, op.LedPred)
+	return expr
+}
+
+// e1[e2]
+func array_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+	p.match(lexer.OPEN_BRACKET)
+
+	var expr = &ArraySubscriptExpr{Node: Node{p.ctx}}
+	expr.Target = lhs
+	expr.Sub = p.parseExpression(nil, op.LedPred)
+	p.match(lexer.CLOSE_BRACKET)
+	return expr
+}
+
+// could be funcall
+func lparen_led(p *Parser, lhs Expression, op *operation) Expression {
+	defer p.trace("")()
+	p.match(lexer.LPAREN)
+	var expr = &FunctionCall{Node: Node{p.ctx}}
+	expr.Func = lhs
+	oldpred := operations[lexer.COMMA].LedPred
+
+	//NOTE: there is a trick here:
+	// there is a conflict when parsing args of form `expr, expr ...`,
+	// which will be parsed as `comma expr`, so to handle this correctly,
+	// I temperarily mark COMMA as END-OF-EXPR, and restore precedence later
+	operations[lexer.COMMA].LedPred = -1
+
+	for {
+		if p.peek(0).Kind == lexer.RPAREN {
+			break
+		}
+
+		expr.Args = append(expr.Args, p.parseExpression(nil, 0))
+		if p.peek(0).Kind == lexer.COMMA {
+			p.next()
+		}
+	}
+
+	operations[lexer.COMMA].LedPred = oldpred
+	p.match(lexer.RPAREN)
+	return expr
+}
+
+// could primary (e), cast (e){...}
+func lparen_nud(p *Parser, op *operation) Expression {
 	defer p.trace("")()
 	return nil
 }
@@ -590,16 +679,17 @@ func (self *Parser) DumpAst() {
 		case *TranslationUnit:
 			tu := ast.(*TranslationUnit)
 			scope = self.ctx.top
+			stack++
 			for _, d := range tu.funcDecls {
-				stack++
 				visit(d)
-				stack--
 			}
+			stack--
+
+			stack++
 			for _, d := range tu.varDecls {
-				stack++
 				visit(d)
-				stack--
 			}
+			stack--
 
 		case *IntLiteralExpr:
 			e := ast.(*IntLiteralExpr)
@@ -633,18 +723,59 @@ func (self *Parser) DumpAst() {
 				e  = ast.(*UnaryOperation)
 				ty = reflect.TypeOf(e).Elem()
 			)
-			log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
+			if e.Postfix {
+				log(fmt.Sprintf("%s(postfix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+			} else {
+				log(fmt.Sprintf("%s(prefix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+			}
 			stack++
 			visit(e.expr)
 			stack--
 
 		case *ConditionalOperation:
-		case *ExprStmt:
-			e := ast.(*ExprStmt)
-			ty := reflect.TypeOf(e).Elem()
-			log(fmt.Sprintf("%s", ty.Name()))
+			e := ast.(*ConditionalOperation)
+			log("ConditionalOperation")
 			stack++
-			visit(e.Expr)
+			visit(e.Cond)
+			visit(e.True)
+			visit(e.False)
+			stack--
+
+		case *ArraySubscriptExpr:
+			e := ast.(*ArraySubscriptExpr)
+			log("ArraySubscriptExpr")
+			stack++
+			visit(e.Target)
+			visit(e.Sub)
+			stack--
+
+		case *MemberExpr:
+			e := ast.(*MemberExpr)
+			log("MemberExpr")
+			stack++
+			visit(e.Target)
+			visit(e.Member)
+			stack--
+
+		case *FunctionCall:
+			e := ast.(*FunctionCall)
+			log("FunctionCall")
+			stack++
+			visit(e.Func)
+			for _, arg := range e.Args {
+				visit(arg)
+			}
+			stack--
+
+		case *CompoundAssignExpr:
+			var (
+				e  = ast.(*CompoundAssignExpr)
+				ty = reflect.TypeOf(e).Elem()
+			)
+			log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
+			stack++
+			visit(e.LHS)
+			visit(e.RHS)
 			stack--
 
 		case *VariableDecl:
@@ -762,38 +893,39 @@ func init() {
 	operations[lexer.COMMA] = &operation{lexer.Token{}, LeftAssoc, -1, 10, nil, binop_led}
 
 	operations[lexer.ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.MUL_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.DIV_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.MOD_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.PLUS_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.MINUS_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.LSHIFT_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.RSHIFT_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.AND_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.OR_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
-	operations[lexer.XOR_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, binop_led}
+	operations[lexer.MUL_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.DIV_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.MOD_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.PLUS_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.MINUS_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.LSHIFT_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.RSHIFT_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.AND_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.OR_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
+	operations[lexer.XOR_ASSIGN] = &operation{lexer.Token{}, RightAssoc, -1, 20, nil, assign_led}
 
 	//?:
-	operations[lexer.QUEST] = &operation{lexer.Token{}, RightAssoc, -1, 30, nil, nil}
+	operations[lexer.QUEST] = &operation{lexer.Token{}, RightAssoc, -1, 30, nil, condop_led}
+	operations[lexer.COLON] = &operation{lexer.Token{}, RightAssoc, -1, -1, nil, expr_led}
 
-	operations[lexer.LOG_OR] = &operation{lexer.Token{}, LeftAssoc, -1, 40, nil, nil}
-	operations[lexer.LOG_AND] = &operation{lexer.Token{}, LeftAssoc, -1, 50, nil, nil}
+	operations[lexer.LOG_OR] = &operation{lexer.Token{}, LeftAssoc, -1, 40, nil, binop_led}
+	operations[lexer.LOG_AND] = &operation{lexer.Token{}, LeftAssoc, -1, 50, nil, binop_led}
 
-	operations[lexer.OR] = &operation{lexer.Token{}, LeftAssoc, -1, 60, nil, nil}
-	operations[lexer.XOR] = &operation{lexer.Token{}, LeftAssoc, -1, 70, nil, nil}
-	operations[lexer.AND] = &operation{lexer.Token{}, LeftAssoc, 150, 80, nil, nil}
+	operations[lexer.OR] = &operation{lexer.Token{}, LeftAssoc, -1, 60, nil, binop_led}
+	operations[lexer.XOR] = &operation{lexer.Token{}, LeftAssoc, -1, 70, nil, binop_led}
+	operations[lexer.AND] = &operation{lexer.Token{}, LeftAssoc, 150, 80, nil, binop_led}
 
-	operations[lexer.EQUAL] = &operation{lexer.Token{}, LeftAssoc, -1, 90, nil, nil}
-	operations[lexer.NE] = &operation{lexer.Token{}, LeftAssoc, -1, 90, nil, nil}
+	operations[lexer.EQUAL] = &operation{lexer.Token{}, LeftAssoc, -1, 90, nil, binop_led}
+	operations[lexer.NE] = &operation{lexer.Token{}, LeftAssoc, -1, 90, nil, binop_led}
 
 	// >, <, <=, >=
-	operations[lexer.GREAT] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
-	operations[lexer.LESS] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
-	operations[lexer.GE] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
-	operations[lexer.LE] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, nil}
+	operations[lexer.GREAT] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, binop_led}
+	operations[lexer.LESS] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, binop_led}
+	operations[lexer.GE] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, binop_led}
+	operations[lexer.LE] = &operation{lexer.Token{}, LeftAssoc, -1, 100, nil, binop_led}
 
-	operations[lexer.LSHIFT] = &operation{lexer.Token{}, LeftAssoc, -1, 110, nil, nil}
-	operations[lexer.RSHIFT] = &operation{lexer.Token{}, LeftAssoc, -1, 110, nil, nil}
+	operations[lexer.LSHIFT] = &operation{lexer.Token{}, LeftAssoc, -1, 110, nil, binop_led}
+	operations[lexer.RSHIFT] = &operation{lexer.Token{}, LeftAssoc, -1, 110, nil, binop_led}
 
 	operations[lexer.MINUS] = &operation{lexer.Token{}, LeftAssoc, 150, 120, unaryop_nud, binop_led}
 	operations[lexer.PLUS] = &operation{lexer.Token{}, LeftAssoc, 150, 120, unaryop_nud, binop_led}
@@ -803,22 +935,24 @@ func init() {
 	operations[lexer.MOD] = &operation{lexer.Token{}, LeftAssoc, -1, 130, nil, binop_led}
 
 	// cast
-	// NOTE: ( can appear at a lot of places: primary (expr), postfix (type){initlist}, postif func()
+	// NOTE: ( can appear at a lot of places: primary (expr), postfix (type){initlist}, postfix func()
 	// need special take-care
-	operations[lexer.LPAREN] = &operation{lexer.Token{}, LeftAssoc, -1, 140, nil, binop_led}
+	operations[lexer.LPAREN] = &operation{lexer.Token{}, LeftAssoc, 200, 140, lparen_nud, lparen_led}
+	operations[lexer.RPAREN] = &operation{lexer.Token{}, LeftAssoc, -1, -1, nil, expr_led}
 
 	// unary !, ~
-	operations[lexer.NOT] = &operation{lexer.Token{}, LeftAssoc, -1, 150, nil, binop_led}
-	operations[lexer.TILDE] = &operation{lexer.Token{}, LeftAssoc, -1, 150, nil, binop_led}
+	operations[lexer.NOT] = &operation{lexer.Token{}, LeftAssoc, -1, 150, unaryop_nud, nil}
+	operations[lexer.TILDE] = &operation{lexer.Token{}, LeftAssoc, -1, 150, unaryop_nud, nil}
 	// &, *, +, - is assigned beforehand
 
 	// prefix and postfix
 	operations[lexer.INC] = &operation{lexer.Token{}, LeftAssoc, 150, 160, unaryop_nud, unaryop_led}
 	operations[lexer.DEC] = &operation{lexer.Token{}, LeftAssoc, 150, 160, unaryop_nud, unaryop_led}
 
-	operations[lexer.OPEN_BRACKET] = &operation{lexer.Token{}, LeftAssoc, -1, 160, unaryop_nud, unaryop_led}
-	operations[lexer.DOT] = &operation{lexer.Token{}, LeftAssoc, -1, 160, unaryop_nud, unaryop_led}
-	operations[lexer.REFERENCE] = &operation{lexer.Token{}, LeftAssoc, -1, 160, unaryop_nud, unaryop_led}
+	operations[lexer.OPEN_BRACKET] = &operation{lexer.Token{}, LeftAssoc, -1, 160, nil, array_led}
+	operations[lexer.CLOSE_BRACKET] = &operation{lexer.Token{}, LeftAssoc, -1, -1, nil, expr_led}
+	operations[lexer.DOT] = &operation{lexer.Token{}, LeftAssoc, -1, 160, nil, member_led}
+	operations[lexer.REFERENCE] = &operation{lexer.Token{}, LeftAssoc, -1, 160, nil, member_led}
 
 	operations[lexer.INT_LITERAL] = &operation{lexer.Token{}, NoAssoc, 200, -1, literal_nud, nil}
 	operations[lexer.STR_LITERAL] = &operation{lexer.Token{}, NoAssoc, 200, -1, literal_nud, nil}

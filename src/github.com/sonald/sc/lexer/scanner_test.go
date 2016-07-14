@@ -70,6 +70,8 @@ int main() {
 	a && b || (b+2);
 	a += --b + --a;
 	return  (a>=b) || ((a<<=1) & b) !=0;
+	!b;
+	~a;
 }`)
 	s := NewScanner(bytes.NewReader(src))
 

@@ -21,6 +21,10 @@ type Node struct {
 	ctx *AstContext
 }
 
+func (n *Node) Repr() string {
+	return "#"
+}
+
 type TranslationUnit struct {
 	Node
 	filename  string
@@ -125,21 +129,39 @@ func (self *ConditionalOperation) Repr() string {
 	return fmt.Sprintf("%s(Cond(%s) %v %v)", ty.Name(), ty2.Name(), ty3.Name(), ty4.Name())
 }
 
+// Target[Sub]
+type ArraySubscriptExpr struct {
+	Node
+	Target Expression
+	Sub    Expression
+}
+
+// for . and ->
+type MemberExpr struct {
+	Node
+	Target Expression
+	Member Expression
+}
+
+type FunctionCall struct {
+	Node
+	Func Expression
+	Args []Expression
+}
+
+// inspired from llvm, to distinguished from BinaryOp
+type CompoundAssignExpr struct {
+	Node
+	Op  lexer.Kind
+	LHS Expression
+	RHS Expression
+}
+
 //--------------------------------------------------------------------------------
 
 // considered abstract
 type Statement interface {
 	Ast
-}
-
-type ExprStmt struct {
-	Node
-	Expr Expression
-}
-
-func (self *ExprStmt) Repr() string {
-	ty := reflect.TypeOf(self).Elem()
-	return fmt.Sprintf("%s(%s)", ty.Name(), self.Expr.Repr())
 }
 
 type VariableDecl struct {
