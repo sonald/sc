@@ -157,6 +157,23 @@ type CompoundAssignExpr struct {
 	RHS Expression
 }
 
+type CastExpr struct {
+	Node
+	Type SymbolType
+	Expr Expression
+}
+
+type CompoundLiteralExpr struct {
+	Node
+	Type     SymbolType
+	InitList *InitListExpr
+}
+
+type InitListExpr struct {
+	Node
+	inits []Expression
+}
+
 //--------------------------------------------------------------------------------
 
 // considered abstract
