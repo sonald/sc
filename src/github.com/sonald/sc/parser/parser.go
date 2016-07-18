@@ -136,7 +136,8 @@ func isTypeQualifier(tok lexer.Token) bool {
 }
 
 func (self *Parser) parseError(tok lexer.Token, msg string) {
-	panic(fmt.Sprintf("tok %s(%s), %s", lexer.TokKinds[tok.Kind], tok.AsString(), msg))
+	panic(fmt.Sprintf("tok %s(%s) %d:%d, %s", lexer.TokKinds[tok.Kind], tok.AsString(),
+		tok.Line, tok.Column, msg))
 }
 
 func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
@@ -298,6 +299,7 @@ func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 
 func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
 	defer self.trace("")()
+	defer self.handlePanic(lexer.SEMICOLON)
 
 	var tmpl = &Symbol{}
 	self.parseTypeDecl(opts, tmpl)
@@ -347,6 +349,8 @@ done:
 
 func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
 	defer self.trace("")()
+	defer self.handlePanic(lexer.RBRACE)
+
 	var scope = self.PushScope()
 	var compound = &CompoundStmt{Node: Node{self.ctx}, Scope: scope}
 
@@ -365,6 +369,8 @@ func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
 
 func (self *Parser) parseStatement(opts *ParseOption) Statement {
 	defer self.trace("")()
+	defer self.handlePanic(lexer.SEMICOLON)
+
 	tok := self.peek(0)
 
 	var stmt Statement
@@ -1014,6 +1020,24 @@ func (self *Parser) DumpAst() {
 	}
 
 	visit(top)
+}
+
+func (self *Parser) handlePanic(kd lexer.Kind) {
+	defer self.trace("")()
+	if p := recover(); p != nil {
+		util.Printf(util.Parser, util.Critical, "Parse Error: %v\n", p)
+
+		var pcs []uintptr
+		if npc := runtime.Callers(0, pcs); npc > 0 {
+			for _, pc := range pcs {
+				f, l := runtime.FuncForPC(pc).FileLine(pc)
+				util.Printf("%s:%d\n", f, l)
+			}
+		}
+
+		for tok := self.next(); tok.Kind != lexer.EOT && tok.Kind != kd; tok = self.next() {
+		}
+	}
 }
 
 func (self *Parser) trace(msg string) func() {
