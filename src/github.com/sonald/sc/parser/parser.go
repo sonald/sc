@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/sonald/sc/lexer"
 	"github.com/sonald/sc/util"
+	"io"
 	"math/rand"
-	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -17,18 +17,20 @@ const NR_LA = 4
 type ParsingContext int
 
 type Parser struct {
-	lex          *lexer.Scanner
-	tokens       [NR_LA]lexer.Token // support 4-lookahead
-	cursor       int
-	eot          bool // meat EOT
-	ctx          *AstContext
-	currentScope *SymbolScope
-	tu           *TranslationUnit
-	verbose      bool
+	lex             *lexer.Scanner
+	tokens          [NR_LA]lexer.Token // support 4-lookahead
+	cursor          int
+	eot             bool // meat EOT
+	ctx             *AstContext
+	currentScope    *SymbolScope
+	tu              *TranslationUnit
+	effectiveParent Ast // This is a bad name, it is used for RecordDecl parsing
+	verbose         bool
 }
 
 type ParseOption struct {
 	filename    string
+	reader      io.Reader
 	dumpAst     bool
 	dumpSymbols bool
 	verbose     bool // log call trace
@@ -88,13 +90,7 @@ func (self *Parser) match(kd lexer.Kind) {
 
 // the only entry
 func (self *Parser) Parse(opts *ParseOption) Ast {
-	if f, err := os.Open(opts.filename); err != nil {
-		util.Printf("%s\n", err.Error())
-		return nil
-	} else {
-		self.lex = lexer.NewScanner(f)
-	}
-
+	self.lex = lexer.NewScanner(opts.reader)
 	for i := range self.tokens {
 		self.tokens[i] = self.getNextToken()
 	}
@@ -108,6 +104,8 @@ func (self *Parser) Parse(opts *ParseOption) Ast {
 func (self *Parser) parseTU(opts *ParseOption) Ast {
 	self.tu = &TranslationUnit{}
 	self.tu.filename = opts.filename
+	self.effectiveParent = self.tu
+	self.ctx.top.Owner = self.tu
 	for self.peek(0).Kind != lexer.EOT {
 		self.parseExternalDecl(opts)
 	}
@@ -148,15 +146,14 @@ func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
 	for {
 		tok := self.peek(0)
 		if tok.Kind == lexer.KEYWORD {
-			self.next()
 			if isStorageClass(tok) {
+				self.next()
 				if sym.Storage == NilStorage {
 					sym.Storage = storages[tok.AsString()]
 				} else {
 					self.parseError(tok, "multiple storage class specified")
 				}
 			} else if isTypeSpecifier(tok) {
-				//FIXME: handle multiple typespecifier
 				if sym.Type != nil {
 					if _, qualified := sym.Type.(*QualifiedType); !qualified {
 						self.parseError(tok, "multiple type specifier")
@@ -164,9 +161,14 @@ func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
 				}
 				switch tok.AsString() {
 				case "int":
+					self.next()
 					ty = &IntegerType{}
 				case "float":
+					self.next()
 					ty = &FloatType{}
+				case "union", "struct":
+					ty = self.parseRecordType()
+
 				default:
 					self.parseError(tok, "not implemented")
 				}
@@ -182,14 +184,16 @@ func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
 				}
 
 			} else if isTypeQualifier(tok) {
+				self.next()
 				sym.Type = &QualifiedType{Base: sym.Type, Qualifier: typeQualifier[tok.AsString()]}
 				//self.parseError(tok, "multiple type qualifier specified")
 			} else if tok.AsString() == "inline" {
+				self.next()
 				//ignore now
 			} else {
 				self.parseError(tok, "invalid declaration specifier")
 			}
-			//FIXME: handle usertype by typedef, struct, union
+			//FIXME: handle usertype by typedef
 		} else {
 			break
 		}
@@ -276,6 +280,7 @@ func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 		fdecl.Name = newSym.Name.AsString()
 		// when found definition of func, we need to chain fdecl.Scope with body
 		fdecl.Scope = self.PushScope()
+		fdecl.Scope.Owner = fdecl
 		self.parseFunctionParams(opts, fdecl)
 		self.PopScope()
 		self.match(lexer.RPAREN)
@@ -295,6 +300,189 @@ func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 		}
 	}
 	return decl
+}
+
+/**
+struct-or-union-specifier:
+	struct-or-union identifier? { struct-declaration-list }
+	struct-or-union identifier
+
+struct-or-union: struct | union
+
+struct-declaration-list: struct-declaration+
+
+struct-declaration: specifier-qualifier-list struct-declarator-list ;
+
+specifier-qualifier-list: ( type-specifier | type-qualifier ) *
+
+struct-declarator-list: struct-declarator
+	struct-declarator-list , struct-declarator
+
+struct-declarator:
+	declarator
+	declarator? : constant-expression
+*/
+
+func (self *Parser) parseRecordType() SymbolType {
+	defer self.trace("")()
+	var (
+		recDecl = &RecordDecl{Node: Node{self.ctx}}
+		recSym  = &Symbol{}
+		ret     = &RecordType{}
+		tok     lexer.Token
+	)
+
+	tok = self.next()
+	ret.Union = tok.AsString() == "union"
+
+	if tok = self.next(); tok.Kind == lexer.IDENTIFIER {
+		//TODO: check redeclaration here
+		ret.Name = tok.AsString()
+		recSym.Name = tok
+		if ty := self.LookupUserType(ret.Name); ty != nil {
+			return ty
+		}
+	} else {
+		ret.Name = NextAnonyRecordName()
+	}
+	recSym.Type = ret
+	recDecl.Sym = ret.Name
+
+	self.match(lexer.LBRACE)
+
+	//NOTE: we register here so that pointer of this type can be used as field type
+	//FIXME: if parse failed, need to deregister it
+	self.AddUserType(ret)
+	self.AddTypeSymbol(recSym)
+	recDecl.Scope = self.PushScope()
+	recDecl.Scope.Owner = recDecl
+
+	defer func() {
+		self.PopScope()
+		if p := recover(); p == nil {
+			if ds, ok := self.effectiveParent.(*DeclStmt); ok {
+				ds.RecordDecls = append(ds.RecordDecls, recDecl)
+			} else {
+				self.tu.recordDecls = append(self.tu.recordDecls, recDecl)
+			}
+		} else {
+			panic(p) //propagate
+		}
+	}()
+
+	for {
+		if self.peek(0).Kind == lexer.RBRACE {
+			break
+		}
+
+		var tmplTy SymbolType
+		var tmplSym = &Symbol{}
+		var loc = self.peek(0).Location
+
+		for {
+			tok := self.peek(0)
+			if tok.Kind == lexer.KEYWORD {
+				if isTypeSpecifier(tok) {
+					if tmplSym.Type != nil {
+						if _, qualified := tmplSym.Type.(*QualifiedType); !qualified {
+							self.parseError(tok, "multiple type specifier")
+						}
+					}
+					switch tok.AsString() {
+					case "int":
+						self.next()
+						tmplTy = &IntegerType{}
+					case "float":
+						self.next()
+						tmplTy = &FloatType{}
+					case "union", "struct":
+						tmplTy = self.parseRecordType()
+
+					default:
+						self.parseError(tok, "not implemented")
+					}
+
+					if tmplSym.Type == nil {
+						tmplSym.Type = tmplTy
+					} else {
+						var qty = tmplSym.Type.(*QualifiedType)
+						for qty.Base != nil {
+							qty = qty.Base.(*QualifiedType)
+						}
+						qty.Base = tmplTy
+					}
+
+				} else if isTypeQualifier(tok) {
+					self.next()
+					tmplSym.Type = &QualifiedType{Base: tmplSym.Type, Qualifier: typeQualifier[tok.AsString()]}
+				} else {
+					self.parseError(tok, "invalid field type specifier")
+				}
+			} else {
+				break
+			}
+		}
+
+		util.Printf("parsed field type template %v", tmplSym)
+
+		for {
+			if self.peek(0).Kind == lexer.SEMICOLON {
+				self.next()
+				break
+			}
+
+			var fd = &FieldDecl{Node: Node{self.ctx}}
+			var ft = &FieldType{}
+
+			if self.peek(0).Kind != lexer.COLON {
+				// FIXME: parseDeclarator will add new symbol into current scope,
+				// which will pollute scoping rule
+				var decl = self.parseDeclarator(nil, tmplSym)
+				switch decl.(type) {
+				case *VariableDecl:
+					var vd = decl.(*VariableDecl)
+					var vs = self.LookupSymbol(vd.Sym)
+
+					fd.Loc = vs.Name.Location
+					fd.Sym = vd.Sym
+					recDecl.Fields = append(recDecl.Fields, fd)
+
+					ft.Base = vs.Type
+					ft.Name = fd.Sym
+
+				default:
+					self.parseError(self.peek(0), "invalid field declarator")
+				}
+			} else {
+				fd.Loc = loc
+				fd.Sym = NextAnonyFieldName(recDecl.Sym)
+				recDecl.Fields = append(recDecl.Fields, fd)
+
+				ft.Base = tmplSym.Type
+				ft.Name = fd.Sym
+			}
+
+			// FIXME: parse an const expr here, but in that case, a SymbolType
+			// may contain an Expression (Ast) node which feels weird to me.
+			if self.peek(0).Kind == lexer.COLON {
+				self.next()
+				tag := self.peek(0).AsInt()
+				ft.Tag = &tag
+				self.match(lexer.INT_LITERAL)
+			}
+
+			util.Printf("parsed field type %v", ft)
+			ret.Fields = append(ret.Fields, ft)
+			if self.peek(0).Kind == lexer.COMMA {
+				self.next()
+			}
+		}
+	}
+
+	self.match(lexer.RBRACE)
+
+	util.Printf("parsed RecordType: %v", ret)
+	return ret
 }
 
 func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
@@ -352,7 +540,9 @@ func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
 	defer self.handlePanic(lexer.RBRACE)
 
 	var scope = self.PushScope()
+	defer func() { self.PopScope() }()
 	var compound = &CompoundStmt{Node: Node{self.ctx}, Scope: scope}
+	scope.Owner = compound
 
 	self.match(lexer.LBRACE)
 
@@ -363,7 +553,6 @@ func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
 		compound.Stmts = append(compound.Stmts, self.parseStatement(opts))
 	}
 	self.match(lexer.RBRACE)
-	self.PopScope()
 	return compound
 }
 
@@ -398,6 +587,12 @@ func (self *Parser) parseDeclStatement(opts *ParseOption) *DeclStmt {
 	defer self.trace("")()
 
 	var declStmt = &DeclStmt{Node: Node{self.ctx}}
+	var prevParent = self.effectiveParent
+	self.effectiveParent = declStmt
+
+	defer func() {
+		self.effectiveParent = prevParent
+	}()
 
 	var tmpl = &Symbol{}
 	self.parseTypeDecl(opts, tmpl)
@@ -790,8 +985,51 @@ func (self *Parser) AddSymbol(sym *Symbol) {
 	self.currentScope.AddSymbol(sym)
 }
 
+// this is for type symbol name such as struct/enum/union/typedef
+func (self *Parser) AddTypeSymbol(sym *Symbol) {
+	var current = self.currentScope
+
+done:
+	for ; current != nil; current = current.Parent {
+		switch current.Owner.(type) {
+		case *CompoundStmt:
+			break done
+		case *TranslationUnit:
+			break done
+		}
+	}
+	current.AddSymbol(sym)
+}
+
 func (self *Parser) LookupSymbol(name string) *Symbol {
 	return self.currentScope.LookupSymbol(name)
+}
+
+func (self *Parser) AddUserType(st SymbolType) {
+	var current = self.currentScope
+
+done:
+	for ; current != nil; current = current.Parent {
+		switch current.Owner.(type) {
+		case *CompoundStmt:
+			break done
+		case *TranslationUnit:
+			break done
+		}
+	}
+
+	current.RegisterUserType(st)
+}
+
+func (self *Parser) LookupUserType(name string) SymbolType {
+	var current = self.currentScope
+
+	for ; current != nil; current = current.Parent {
+		if ty := current.LookupUserType(name); ty != nil {
+			return ty
+		}
+	}
+	return nil
 }
 
 // this is useless, need to trace symbol hierachy from TU
@@ -811,30 +1049,41 @@ func (self *Parser) DumpSymbols() {
 }
 
 func (self *Parser) DumpAst() {
-	var top Ast = self.tu
-	var stack int = 0
-	var scope *SymbolScope
+	var (
+		top   Ast = self.tu
+		stack int = 0
+		scope *SymbolScope
+		visit func(Ast)
+		clr   int
+	)
 
-	fmt.Println("DumpAst")
-	var visit func(Ast)
 	var log = func(msg string) {
-		var clr = rand.Intn(200) + 50
+		if 1 == stack {
+			clr = rand.Intn(240) + 10
+		}
 		fmt.Print(fmt.Sprintf("\033[38;5;%dm%s%s\033[00m\n", clr, strings.Repeat("  ", stack), msg))
 	}
 
+	fmt.Println("Ast:")
 	visit = func(ast Ast) {
 		switch ast.(type) {
 		case *TranslationUnit:
 			tu := ast.(*TranslationUnit)
 			scope = self.ctx.top
 			stack++
-			for _, d := range tu.funcDecls {
+			for _, d := range tu.varDecls {
 				visit(d)
 			}
 			stack--
 
 			stack++
-			for _, d := range tu.varDecls {
+			for _, d := range tu.recordDecls {
+				visit(d)
+			}
+			stack--
+
+			stack++
+			for _, d := range tu.funcDecls {
 				visit(d)
 			}
 			stack--
@@ -949,6 +1198,31 @@ func (self *Parser) DumpAst() {
 			}
 			stack--
 
+		case *FieldDecl:
+			e := ast.(*FieldDecl)
+			log(fmt.Sprintf("FieldDecl(%s)", e.Sym))
+
+		case *RecordDecl:
+			e := ast.(*RecordDecl)
+			sym := scope.LookupSymbol(e.Sym)
+			//fmt.Printf("find RecordDecl %s\n", e.Sym)
+
+			ty := "struct"
+			if sym.Type.(*RecordType).Union {
+				ty = "union"
+			}
+
+			log(fmt.Sprintf("RecordDecl(%s %s)", ty, e.Sym))
+
+			var prev *SymbolScope
+			prev, scope = scope, e.Scope
+			stack++
+			for _, f := range e.Fields {
+				visit(f)
+			}
+			stack--
+			scope = prev
+
 		case *VariableDecl:
 			e := ast.(*VariableDecl)
 			sym := scope.LookupSymbol(e.Sym)
@@ -969,7 +1243,8 @@ func (self *Parser) DumpAst() {
 
 		case *FunctionDecl:
 			e := ast.(*FunctionDecl)
-			scope = e.Scope
+			var prev *SymbolScope
+			prev, scope = scope, e.Scope
 			sym := scope.LookupSymbol(e.Name)
 			log(fmt.Sprintf("FuncDecl(%v)", sym))
 
@@ -982,6 +1257,7 @@ func (self *Parser) DumpAst() {
 			if e.Body != nil {
 				visit(e.Body)
 			}
+			scope = prev
 
 		case *LabelStmt:
 		case *CaseStmt:
@@ -1006,13 +1282,15 @@ func (self *Parser) DumpAst() {
 		case *BreakStmt:
 		case *CompoundStmt:
 			e := ast.(*CompoundStmt)
-			scope = e.Scope
+			var prev *SymbolScope
+			prev, scope = scope, e.Scope
 			log("CompoundStmt")
 			stack++
 			for _, stmt := range e.Stmts {
 				visit(stmt)
 			}
 			stack--
+			scope = prev
 
 		default:
 			break

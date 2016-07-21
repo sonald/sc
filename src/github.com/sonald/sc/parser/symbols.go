@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"github.com/sonald/sc/lexer"
+	"strings"
 )
 
 type Storage int
@@ -87,8 +88,11 @@ type Pointer struct {
 
 func (p *Pointer) String() string {
 	switch p.Source.(type) {
-	case *Struct:
-		var s = p.Source.(*Struct)
+	case *RecordType:
+		var s = p.Source.(*RecordType)
+		if s.Union {
+			return fmt.Sprintf("union %s*", s.Name)
+		}
 		return fmt.Sprintf("struct %s*", s.Name)
 	default:
 		return fmt.Sprintf("%v*", p.Source)
@@ -128,27 +132,85 @@ func (a *Array) String() string {
 	return s
 }
 
-// check loop def in semantic module
-type Struct struct {
-	Name   string
-	Fields []SymbolType
+var anonymousRecordSeq int = 0
+var anonymousFieldSeq int = 0
+
+type FieldType struct {
+	Base SymbolType
+	Name string
+	Tag  *int // a pointer since Tag is optional
 }
 
-func (s *Struct) String() string {
-	var str = fmt.Sprintf("struct %s{", s.Name)
+func (ft *FieldType) String() string {
+	nm := ft.Name
+	if strings.HasPrefix(ft.Name, "!") {
+		nm = ""
+	}
+	if ft.Tag != nil {
+		return fmt.Sprintf("%v %s:%d", ft.Base, nm, *ft.Tag)
+	}
+	return fmt.Sprintf("%v %s", ft.Base, nm)
+}
+
+func NextAnonyFieldName(recName string) string {
+	anonymousFieldSeq++
+	return fmt.Sprintf("!%s!field%d", recName, anonymousFieldSeq)
+}
+
+// check loop def in semantic module
+// anonymous record got a name leading with ! (because this is a letter that won't
+// be accepted by compiler
+type RecordType struct {
+	Name   string // record name or compiler assigned internal name for anonymous record
+	Union  bool
+	Fields []*FieldType
+}
+
+func (s *RecordType) String() string {
+	kd := "struct"
+	if s.Union {
+		kd = "union"
+	}
+
+	nm := s.Name
+	if strings.HasPrefix(nm, "!recordty") {
+		nm = ""
+	}
+	var str = fmt.Sprintf("%s %s{", kd, s.Name)
 	for i, f := range s.Fields {
 		str += fmt.Sprintf("%s", f)
 		if i < len(s.Fields)-1 {
-			str += ", "
+			str += "; "
 		}
 	}
 	str += "}"
 	return str
 }
 
+func NextAnonyRecordName() string {
+	anonymousRecordSeq++
+	return fmt.Sprintf("!recordty%d", anonymousRecordSeq)
+}
+
+var anonymousEnumSeq = 0
+
+type EnumType struct {
+	Loc lexer.Location
+}
+
+func (e *EnumType) String() string {
+	return ""
+}
+
+func NextAnonyEnumName() string {
+	anonymousEnumSeq++
+	return fmt.Sprintf("!enumty%d", anonymousEnumSeq)
+}
+
 // typedef
 type UserType struct {
 	Ref SymbolType
+	Loc lexer.Location
 }
 
 func (s *UserType) String() string {
@@ -173,8 +235,11 @@ func (sym *Symbol) String() string {
 
 type SymbolScope struct {
 	Symbols  []*Symbol
+	types    []SymbolType
 	Parent   *SymbolScope
 	Children []*SymbolScope
+	//FIXME: this will introduce a ref-loop, not gc friendly
+	Owner Ast
 }
 
 func (scope *SymbolScope) AddSymbol(sym *Symbol) {
@@ -189,6 +254,52 @@ func (scope *SymbolScope) LookupSymbol(name string) *Symbol {
 			if sym.Name.AsString() == name {
 				return sym
 			}
+		}
+	}
+
+	return nil
+}
+
+func (scope *SymbolScope) RegisterUserType(st SymbolType) {
+	switch st.(type) {
+	case *RecordType:
+		rt := st.(*RecordType)
+		if prev := scope.LookupUserType(rt.Name); prev != nil {
+			var s = [2]string{"type redeclartion, previous is at ", ""}
+
+			switch prev.(type) {
+			case *RecordType:
+				//FIXME: need to find corresponding RecordDecl
+				// s[1] = fmt.Sprint(prev.(*RecordType).Loc)
+			case *EnumType:
+			case *UserType:
+				break
+			}
+			panic(fmt.Sprintf(s[0], s[1]))
+
+		}
+
+		scope.types = append(scope.types, st)
+	case *EnumType:
+	case *UserType:
+		break
+	}
+}
+
+func (scope *SymbolScope) LookupUserType(name string) SymbolType {
+	for _, st := range scope.types {
+		switch st.(type) {
+		case *RecordType:
+			rt := st.(*RecordType)
+			if rt.Name == name {
+				return rt
+			}
+		case *EnumType:
+		case *UserType:
+			break
+
+		default:
+			panic("invalid type for usertype")
 		}
 	}
 

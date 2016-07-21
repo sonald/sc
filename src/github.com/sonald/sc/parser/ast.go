@@ -14,7 +14,6 @@ type Ast interface {
 type AstContext struct {
 	top          *SymbolScope
 	currentScope *SymbolScope
-	types        []SymbolType
 }
 
 type Node struct {
@@ -27,9 +26,10 @@ func (n *Node) Repr() string {
 
 type TranslationUnit struct {
 	Node
-	filename  string
-	funcDecls []*FunctionDecl
-	varDecls  []*VariableDecl
+	filename    string
+	funcDecls   []*FunctionDecl
+	varDecls    []*VariableDecl
+	recordDecls []*RecordDecl
 }
 
 func (tu *TranslationUnit) Repr() string {
@@ -181,6 +181,30 @@ type Statement interface {
 	Ast
 }
 
+type FieldDecl struct {
+	Node
+	Sym string // Name of Field's Symbol
+	Loc lexer.Location
+}
+
+func (self *FieldDecl) Repr() string {
+	return fmt.Sprintf("FieldDecl(%s)", self.Sym)
+}
+
+type RecordDecl struct {
+	Node
+	// Name of Record's Symbol, this symbol's type is identical to
+	// this record variable's type
+	Sym    string
+	Fields []*FieldDecl
+	Loc    lexer.Location
+	Scope  *SymbolScope
+}
+
+func (self *RecordDecl) Repr() string {
+	return fmt.Sprintf("RecordDecl(%s)", self.Sym)
+}
+
 type VariableDecl struct {
 	Node
 	Sym  string
@@ -323,7 +347,8 @@ func (self *DoStmt) Repr() string {
 
 type DeclStmt struct {
 	Node
-	Decls []*VariableDecl
+	Decls       []*VariableDecl
+	RecordDecls []*RecordDecl
 }
 
 func (self *DeclStmt) Repr() string {
