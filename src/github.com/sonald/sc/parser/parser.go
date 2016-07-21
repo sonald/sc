@@ -568,19 +568,62 @@ func (self *Parser) parseStatement(opts *ParseOption) Statement {
 	// else
 	switch tok.Kind {
 	case lexer.KEYWORD:
-		//FIXME: handle typedef usertype decl
-		if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
-			stmt = self.parseDeclStatement(opts)
-		} else {
+		switch tok.AsString() {
+		case "if":
+			stmt = self.parseIfStatement(opts)
+
+		case "switch":
+		case "case":
+		case "default":
+		case "while":
+		case "do":
+		case "for":
+		case "goto":
+		case "continue":
+		case "break":
+		case "return":
+		case "sizeof":
+			// sizeof expr
 			stmt = self.parseExprStatement(opts)
+
+		default:
+			if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
+				stmt = self.parseDeclStatement(opts)
+			} else {
+
+				self.parseError(tok, "unknown keyword")
+			}
 		}
 
 	default:
-		stmt = self.parseExprStatement(opts)
+		if tok.Kind == lexer.LBRACE {
+			stmt = self.parseCompoundStmt(opts)
+		} else if tok.Kind == lexer.IDENTIFIER && self.peek(1).Kind == lexer.COLON {
+			// labeled stmt
+		} else {
+			stmt = self.parseExprStatement(opts)
+		}
 	}
 
-	util.Printf("parsed %s\n", stmt.Repr())
+	util.Printf("parsed stmt %s\n", reflect.TypeOf(stmt).Elem().Name())
 	return stmt
+}
+
+func (self *Parser) parseIfStatement(opts *ParseOption) *IfStmt {
+	defer self.trace("")()
+
+	var ifStmt = &IfStmt{Node: Node{self.ctx}}
+	self.next() // eat if
+	self.match(lexer.LPAREN)
+	ifStmt.Cond = self.parseExpression(opts, 0)
+	self.match(lexer.RPAREN)
+	ifStmt.TrueBranch = self.parseStatement(opts)
+	if self.peek(0).AsString() == "else" {
+		self.next()
+		ifStmt.FalseBranch = self.parseStatement(opts)
+	}
+
+	return ifStmt
 }
 
 func (self *Parser) parseDeclStatement(opts *ParseOption) *DeclStmt {
@@ -1269,6 +1312,18 @@ func (self *Parser) DumpAst() {
 		case *DefaultStmt:
 		case *ReturnStmt:
 		case *IfStmt:
+			e := ast.(*IfStmt)
+			log("IfStmt")
+			stack++
+			visit(e.Cond)
+			if e.TrueBranch != nil {
+				visit(e.TrueBranch)
+			}
+			if e.FalseBranch != nil {
+				visit(e.FalseBranch)
+			}
+			stack--
+
 		case *SwitchStmt:
 		case *WhileStmt:
 		case *DoStmt:

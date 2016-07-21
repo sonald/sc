@@ -98,7 +98,39 @@ struct Tree {
 
 }
 
-func TestParseFile(t *testing.T) {
+func TestParseIf(t *testing.T) {
+	var text = `
+int main(int arg)
+{
+	if (arg > 0) {
+		1;
+	} else {
+		0;
+	}
+
+	if (arg++) 
+		--arg;
+	else
+		if (arg > 4) 
+		   2;
+		else
+			arg += 1;
+}
+	`
+
+	opts := ParseOption{
+		filename: "./test.txt",
+		verbose:  true,
+	}
+
+	opts.reader = strings.NewReader(text)
+	p := NewParser()
+	p.Parse(&opts)
+
+	p.DumpAst()
+}
+
+func TestParseAll(t *testing.T) {
 	var text = `
 // this is all expressions we support currently
 int foo(int a, int b)
