@@ -205,7 +205,7 @@ func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
 func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 	defer self.trace("")()
 
-	funcSym := self.currentScope.LookupSymbol(decl.Name)
+	funcSym := self.LookupSymbol(decl.Name)
 	var ty = funcSym.Type.(*Function)
 	for {
 		if self.peek(0).Kind == lexer.RPAREN {
@@ -222,7 +222,7 @@ func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 				var pd = &ParamDecl{decl.Node, arg.(*VariableDecl).Sym}
 				decl.Args = append(decl.Args, pd)
 
-				pty := decl.Scope.LookupSymbol(pd.Sym)
+				pty := decl.Scope.LookupSymbol(pd.Sym, false)
 				ty.Args = append(ty.Args, pty.Type)
 				util.Printf("parsed arg %v", pd.Repr())
 			default:
@@ -998,11 +998,16 @@ done:
 			break done
 		}
 	}
+	sym.Custom = true
 	current.AddSymbol(sym)
 }
 
+func (self *Parser) LookupTypeSymbol(name string) *Symbol {
+	return self.currentScope.LookupSymbol(name, true)
+}
+
 func (self *Parser) LookupSymbol(name string) *Symbol {
-	return self.currentScope.LookupSymbol(name)
+	return self.currentScope.LookupSymbol(name, false)
 }
 
 func (self *Parser) AddUserType(st SymbolType) {
@@ -1204,7 +1209,7 @@ func (self *Parser) DumpAst() {
 
 		case *RecordDecl:
 			e := ast.(*RecordDecl)
-			sym := scope.LookupSymbol(e.Sym)
+			sym := scope.LookupSymbol(e.Sym, true)
 			//fmt.Printf("find RecordDecl %s\n", e.Sym)
 
 			ty := "struct"
@@ -1225,7 +1230,7 @@ func (self *Parser) DumpAst() {
 
 		case *VariableDecl:
 			e := ast.(*VariableDecl)
-			sym := scope.LookupSymbol(e.Sym)
+			sym := scope.LookupSymbol(e.Sym, false)
 
 			log(fmt.Sprintf("VarDecl(%s)", sym))
 			if e.init != nil {
@@ -1237,7 +1242,7 @@ func (self *Parser) DumpAst() {
 		case *Initializer:
 		case *ParamDecl:
 			e := ast.(*ParamDecl)
-			sym := scope.LookupSymbol(e.Sym)
+			sym := scope.LookupSymbol(e.Sym, false)
 			ty := reflect.TypeOf(e).Elem()
 			log(fmt.Sprintf("%s(%v)", ty.Name(), sym))
 
@@ -1245,7 +1250,7 @@ func (self *Parser) DumpAst() {
 			e := ast.(*FunctionDecl)
 			var prev *SymbolScope
 			prev, scope = scope, e.Scope
-			sym := scope.LookupSymbol(e.Name)
+			sym := scope.LookupSymbol(e.Name, false)
 			log(fmt.Sprintf("FuncDecl(%v)", sym))
 
 			stack++

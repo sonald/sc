@@ -242,7 +242,7 @@ type FunctionDecl struct {
 }
 
 func (self *FunctionDecl) Repr() string {
-	sym := self.Scope.LookupSymbol(self.Name)
+	sym := self.Scope.LookupSymbol(self.Name, false)
 	var ty = sym.Type.(*Function)
 	var stg = ""
 	if sym.Storage != NilStorage {

@@ -51,10 +51,11 @@ struct Grid {
     } sub;
 } grid;
 
+// Type Tree and var Tree can be distinguished by parser
 struct Tree {
     int payload;
     struct Tree * Left, *Right;
-} tree;
+} Tree;
 
 `
 	opts := ParseOption{

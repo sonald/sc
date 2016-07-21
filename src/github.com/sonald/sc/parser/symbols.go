@@ -218,9 +218,13 @@ func (s *UserType) String() string {
 	return "UserType"
 }
 
+// we actually have two kinds of symbols
+// first is normal simple reside in VariableDecl or FunctionDecl
+// the second is type symbol for user defined type names
 type Symbol struct {
-	Name lexer.Token
-	Type SymbolType
+	Name   lexer.Token
+	Type   SymbolType
+	Custom bool // true if a type symbol
 	Storage
 }
 
@@ -246,12 +250,12 @@ func (scope *SymbolScope) AddSymbol(sym *Symbol) {
 	scope.Symbols = append(scope.Symbols, sym)
 }
 
-func (scope *SymbolScope) LookupSymbol(name string) *Symbol {
+func (scope *SymbolScope) LookupSymbol(name string, customed bool) *Symbol {
 	var current = scope
 
 	for ; current != nil; current = current.Parent {
 		for _, sym := range current.Symbols {
-			if sym.Name.AsString() == name {
+			if sym.Custom == customed && sym.Name.AsString() == name {
 				return sym
 			}
 		}
