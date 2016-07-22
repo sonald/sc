@@ -107,7 +107,7 @@ func (self *Parser) parseTU(opts *ParseOption) Ast {
 	self.effectiveParent = self.tu
 	self.ctx.top.Owner = self.tu
 	for self.peek(0).Kind != lexer.EOT {
-		self.parseExternalDecl(opts)
+		self.parseExternalDecl()
 	}
 	return self.tu
 }
@@ -138,7 +138,7 @@ func (self *Parser) parseError(tok lexer.Token, msg string) {
 		tok.Line, tok.Column, msg))
 }
 
-func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
+func (self *Parser) parseTypeDecl(sym *Symbol) {
 	defer self.trace("")()
 
 	var ty SymbolType
@@ -202,7 +202,7 @@ func (self *Parser) parseTypeDecl(opts *ParseOption, sym *Symbol) {
 	util.Printf("parsed type template %v", sym)
 }
 
-func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
+func (self *Parser) parseFunctionParams(decl *FunctionDecl) {
 	defer self.trace("")()
 
 	funcSym := self.LookupSymbol(decl.Name)
@@ -213,8 +213,8 @@ func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 		}
 
 		var tmpl = &Symbol{}
-		self.parseTypeDecl(opts, tmpl)
-		if arg := self.parseDeclarator(opts, tmpl); arg == nil {
+		self.parseTypeDecl(tmpl)
+		if arg := self.parseDeclarator(tmpl); arg == nil {
 			break
 		} else {
 			switch arg.(type) {
@@ -238,7 +238,7 @@ func (self *Parser) parseFunctionParams(opts *ParseOption, decl *FunctionDecl) {
 
 //FIXME: support full c99 declarator parsing
 //FIXME: check redeclaration
-func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
+func (self *Parser) parseDeclarator(sym *Symbol) Ast {
 	defer self.trace("")()
 
 	var newSym = Symbol{Type: sym.Type, Storage: sym.Storage}
@@ -281,7 +281,7 @@ func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 		// when found definition of func, we need to chain fdecl.Scope with body
 		fdecl.Scope = self.PushScope()
 		fdecl.Scope.Owner = fdecl
-		self.parseFunctionParams(opts, fdecl)
+		self.parseFunctionParams(fdecl)
 		self.PopScope()
 		self.match(lexer.RPAREN)
 
@@ -294,7 +294,7 @@ func (self *Parser) parseDeclarator(opts *ParseOption, sym *Symbol) Ast {
 		self.next()
 		switch decl.(type) {
 		case *VariableDecl:
-			decl.(*VariableDecl).init = self.parseInitializerList(opts)
+			decl.(*VariableDecl).init = self.parseInitializerList()
 		default:
 			self.parseError(self.peek(0), "Initializer is not allowed here")
 		}
@@ -437,7 +437,7 @@ func (self *Parser) parseRecordType() SymbolType {
 			if self.peek(0).Kind != lexer.COLON {
 				// FIXME: parseDeclarator will add new symbol into current scope,
 				// which will pollute scoping rule
-				var decl = self.parseDeclarator(nil, tmplSym)
+				var decl = self.parseDeclarator(tmplSym)
 				switch decl.(type) {
 				case *VariableDecl:
 					var vd = decl.(*VariableDecl)
@@ -485,19 +485,19 @@ func (self *Parser) parseRecordType() SymbolType {
 	return ret
 }
 
-func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
+func (self *Parser) parseExternalDecl() Ast {
 	defer self.trace("")()
 	defer self.handlePanic(lexer.SEMICOLON)
 
 	var tmpl = &Symbol{}
-	self.parseTypeDecl(opts, tmpl)
+	self.parseTypeDecl(tmpl)
 	for {
 		if self.peek(0).Kind == lexer.SEMICOLON {
 			self.next()
 			break
 		}
 
-		if decl := self.parseDeclarator(opts, tmpl); decl == nil {
+		if decl := self.parseDeclarator(tmpl); decl == nil {
 			break
 		} else {
 			switch decl.(type) {
@@ -514,7 +514,7 @@ func (self *Parser) parseExternalDecl(opts *ParseOption) Ast {
 						panic("fdecl should inside currentScope")
 					}
 					self.currentScope = fdecl.Scope
-					fdecl.Body = self.parseCompoundStmt(opts)
+					fdecl.Body = self.parseCompoundStmt()
 					self.PopScope()
 
 					// parse of function definition done
@@ -535,7 +535,7 @@ done:
 	return nil
 }
 
-func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
+func (self *Parser) parseCompoundStmt() *CompoundStmt {
 	defer self.trace("")()
 	defer self.handlePanic(lexer.RBRACE)
 
@@ -550,13 +550,13 @@ func (self *Parser) parseCompoundStmt(opts *ParseOption) *CompoundStmt {
 		if self.peek(0).Kind == lexer.RBRACE {
 			break
 		}
-		compound.Stmts = append(compound.Stmts, self.parseStatement(opts))
+		compound.Stmts = append(compound.Stmts, self.parseStatement())
 	}
 	self.match(lexer.RBRACE)
 	return compound
 }
 
-func (self *Parser) parseStatement(opts *ParseOption) Statement {
+func (self *Parser) parseStatement() Statement {
 	defer self.trace("")()
 	defer self.handlePanic(lexer.SEMICOLON)
 
@@ -570,7 +570,7 @@ func (self *Parser) parseStatement(opts *ParseOption) Statement {
 	case lexer.KEYWORD:
 		switch tok.AsString() {
 		case "if":
-			stmt = self.parseIfStatement(opts)
+			stmt = self.parseIfStatement()
 
 		case "switch":
 		case "case":
@@ -584,11 +584,11 @@ func (self *Parser) parseStatement(opts *ParseOption) Statement {
 		case "return":
 		case "sizeof":
 			// sizeof expr
-			stmt = self.parseExprStatement(opts)
+			stmt = self.parseExprStatement()
 
 		default:
 			if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
-				stmt = self.parseDeclStatement(opts)
+				stmt = self.parseDeclStatement()
 			} else {
 
 				self.parseError(tok, "unknown keyword")
@@ -597,11 +597,11 @@ func (self *Parser) parseStatement(opts *ParseOption) Statement {
 
 	default:
 		if tok.Kind == lexer.LBRACE {
-			stmt = self.parseCompoundStmt(opts)
+			stmt = self.parseCompoundStmt()
 		} else if tok.Kind == lexer.IDENTIFIER && self.peek(1).Kind == lexer.COLON {
 			// labeled stmt
 		} else {
-			stmt = self.parseExprStatement(opts)
+			stmt = self.parseExprStatement()
 		}
 	}
 
@@ -609,24 +609,24 @@ func (self *Parser) parseStatement(opts *ParseOption) Statement {
 	return stmt
 }
 
-func (self *Parser) parseIfStatement(opts *ParseOption) *IfStmt {
+func (self *Parser) parseIfStatement() *IfStmt {
 	defer self.trace("")()
 
 	var ifStmt = &IfStmt{Node: Node{self.ctx}}
 	self.next() // eat if
 	self.match(lexer.LPAREN)
-	ifStmt.Cond = self.parseExpression(opts, 0)
+	ifStmt.Cond = self.parseExpression(0)
 	self.match(lexer.RPAREN)
-	ifStmt.TrueBranch = self.parseStatement(opts)
+	ifStmt.TrueBranch = self.parseStatement()
 	if self.peek(0).AsString() == "else" {
 		self.next()
-		ifStmt.FalseBranch = self.parseStatement(opts)
+		ifStmt.FalseBranch = self.parseStatement()
 	}
 
 	return ifStmt
 }
 
-func (self *Parser) parseDeclStatement(opts *ParseOption) *DeclStmt {
+func (self *Parser) parseDeclStatement() *DeclStmt {
 	defer self.trace("")()
 
 	var declStmt = &DeclStmt{Node: Node{self.ctx}}
@@ -638,14 +638,14 @@ func (self *Parser) parseDeclStatement(opts *ParseOption) *DeclStmt {
 	}()
 
 	var tmpl = &Symbol{}
-	self.parseTypeDecl(opts, tmpl)
+	self.parseTypeDecl(tmpl)
 	for {
 		if self.peek(0).Kind == lexer.SEMICOLON {
 			self.next()
 			break
 		}
 
-		if decl := self.parseDeclarator(opts, tmpl); decl == nil {
+		if decl := self.parseDeclarator(tmpl); decl == nil {
 			break
 		} else {
 			switch decl.(type) {
@@ -666,9 +666,9 @@ func (self *Parser) parseDeclStatement(opts *ParseOption) *DeclStmt {
 	return declStmt
 }
 
-func (self *Parser) parseExprStatement(opts *ParseOption) Expression {
+func (self *Parser) parseExprStatement() Expression {
 	defer self.trace("")()
-	expr := self.parseExpression(opts, 0)
+	expr := self.parseExpression(0)
 	self.match(lexer.SEMICOLON)
 
 	return expr
@@ -717,7 +717,7 @@ func binop_led(p *Parser, lhs Expression, op *operation) Expression {
 	defer p.trace("")()
 
 	p.next() // eat op
-	rhs := p.parseExpression(nil, op.LedPred)
+	rhs := p.parseExpression(op.LedPred)
 
 	var expr = &BinaryOperation{Node{p.ctx}, op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
@@ -728,7 +728,7 @@ func assign_led(p *Parser, lhs Expression, op *operation) Expression {
 	defer p.trace("")()
 
 	p.next() // eat op
-	rhs := p.parseExpression(nil, op.LedPred)
+	rhs := p.parseExpression(op.LedPred)
 
 	var expr = &CompoundAssignExpr{Node{p.ctx}, op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
@@ -743,10 +743,10 @@ func condop_led(p *Parser, lhs Expression, op *operation) Expression {
 	expr.Cond = lhs
 
 	p.next() // eat ?
-	expr.True = p.parseExpression(nil, op.LedPred)
+	expr.True = p.parseExpression(op.LedPred)
 	p.match(lexer.COLON) // eat :
 
-	expr.False = p.parseExpression(nil, op.LedPred)
+	expr.False = p.parseExpression(op.LedPred)
 
 	util.Printf("parsed %v", expr.Repr())
 	return expr
@@ -756,7 +756,7 @@ func condop_led(p *Parser, lhs Expression, op *operation) Expression {
 func unaryop_nud(p *Parser, op *operation) Expression {
 	defer p.trace("")()
 	p.next()
-	var expr = p.parseExpression(nil, op.NudPred)
+	var expr = p.parseExpression(op.NudPred)
 	return &UnaryOperation{Node{p.ctx}, op.Kind, false, expr}
 }
 
@@ -775,7 +775,7 @@ func member_led(p *Parser, lhs Expression, op *operation) Expression {
 
 	var expr = &MemberExpr{Node: Node{p.ctx}}
 	expr.Target = lhs
-	expr.Member = p.parseExpression(nil, op.LedPred)
+	expr.Member = p.parseExpression(op.LedPred)
 	return expr
 }
 
@@ -786,7 +786,7 @@ func array_led(p *Parser, lhs Expression, op *operation) Expression {
 
 	var expr = &ArraySubscriptExpr{Node: Node{p.ctx}}
 	expr.Target = lhs
-	expr.Sub = p.parseExpression(nil, op.LedPred)
+	expr.Sub = p.parseExpression(op.LedPred)
 	p.match(lexer.CLOSE_BRACKET)
 	return expr
 }
@@ -810,7 +810,7 @@ func lparen_led(p *Parser, lhs Expression, op *operation) Expression {
 			break
 		}
 
-		expr.Args = append(expr.Args, p.parseExpression(nil, 0))
+		expr.Args = append(expr.Args, p.parseExpression(0))
 		if p.peek(0).Kind == lexer.COMMA {
 			p.next()
 		}
@@ -875,7 +875,7 @@ func lparen_nud(p *Parser, op *operation) Expression {
 	p.match(lexer.LPAREN)
 	ty = p.tryParseTypeExpression()
 	if ty == nil {
-		expr = p.parseExpression(nil, 0)
+		expr = p.parseExpression(0)
 		//NOTE: I guess expr == nil means it's not a expression but a type
 		if expr != nil {
 			p.match(lexer.RPAREN)
@@ -889,12 +889,12 @@ func lparen_nud(p *Parser, op *operation) Expression {
 		if p.peek(0).Kind == lexer.LBRACE {
 			compoundLit = &CompoundLiteralExpr{Node: Node{p.ctx}}
 			compoundLit.Type = ty
-			compoundLit.InitList = p.parseInitializerList(nil)
+			compoundLit.InitList = p.parseInitializerList()
 			return compoundLit
 		} else {
 			cast = &CastExpr{Node: Node{p.ctx}}
 			cast.Type = ty
-			cast.Expr = p.parseExpression(nil, op.NudPred)
+			cast.Expr = p.parseExpression(op.NudPred)
 			return cast
 		}
 	}
@@ -902,7 +902,7 @@ func lparen_nud(p *Parser, op *operation) Expression {
 	return nil
 }
 
-func (self *Parser) parseInitializerList(opts *ParseOption) *InitListExpr {
+func (self *Parser) parseInitializerList() *InitListExpr {
 	defer self.trace("")()
 	var (
 		compound = false
@@ -925,7 +925,7 @@ func (self *Parser) parseInitializerList(opts *ParseOption) *InitListExpr {
 				break
 			}
 
-			expr = self.parseExpression(opts, 0)
+			expr = self.parseExpression(0)
 			initList.inits = append(initList.inits, expr)
 			if self.peek(0).Kind == lexer.COMMA {
 				self.next()
@@ -934,7 +934,7 @@ func (self *Parser) parseInitializerList(opts *ParseOption) *InitListExpr {
 
 		self.match(lexer.RBRACE)
 	} else {
-		expr = self.parseExpression(opts, 0)
+		expr = self.parseExpression(0)
 		initList.inits = append(initList.inits, expr)
 	}
 	operations[lexer.COMMA].LedPred = oldpred
@@ -945,7 +945,7 @@ func (self *Parser) parseInitializerList(opts *ParseOption) *InitListExpr {
 // for initializer
 func brace_nud(p *Parser, op *operation) Expression {
 	defer p.trace("")()
-	return p.parseInitializerList(nil)
+	return p.parseInitializerList()
 }
 
 // end of expr
@@ -986,7 +986,7 @@ func literal_nud(p *Parser, op *operation) Expression {
 	return nil
 }
 
-func (self *Parser) parseExpression(opts *ParseOption, rbp int) Expression {
+func (self *Parser) parseExpression(rbp int) Expression {
 	defer self.trace("")()
 
 	if self.peek(0).Kind == lexer.SEMICOLON {
