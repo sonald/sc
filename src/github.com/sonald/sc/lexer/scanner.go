@@ -116,6 +116,12 @@ type Token struct {
 	Value
 }
 
+func MakeToken(kd Kind, val string) Token {
+	tok := Token{Kind: kd}
+	tok.Value.content = val
+	return tok
+}
+
 func (self Token) String() string {
 	return fmt.Sprintf("{%s, Loc: %v, V: [%s]}",
 		TokKinds[self.Kind], self.Location, self.Value.AsString())

@@ -60,13 +60,13 @@ func Println(v ...interface{}) {
 	if len(v) > 2 {
 		if v, ok := v[0].(Domain); ok {
 			dom = v
+			beg++
 		}
 
 		if v, ok := v[1].(Level); ok {
 			lv = v
+			beg++
 		}
-
-		beg = 2
 	}
 
 	if (AllowedDomains & int(dom)) == 0 {
@@ -82,16 +82,16 @@ func Printf(v ...interface{}) {
 	var lv Level = Info
 	var beg int = 0
 
-	if len(v) > 3 {
+	if len(v) >= 3 {
 		if v, ok := v[0].(Domain); ok {
 			dom = v
+			beg++
 		}
 
 		if v, ok := v[1].(Level); ok {
 			lv = v
+			beg++
 		}
-
-		beg = 2
 	}
 
 	if (AllowedDomains & int(dom)) == 0 {

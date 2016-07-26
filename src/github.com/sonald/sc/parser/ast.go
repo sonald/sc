@@ -265,6 +265,7 @@ func (self *FunctionDecl) Repr() string {
 	return s
 }
 
+//FIXME: should Label be a symbol
 type LabelStmt struct {
 	Node
 	Label string
@@ -291,17 +292,9 @@ type DefaultStmt struct {
 	Stmt Statement
 }
 
-func (self *DefaultStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
-}
-
 type ReturnStmt struct {
 	Node
-	Stmt Statement
-}
-
-func (self *ReturnStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
+	Expr Expression
 }
 
 type IfStmt struct {
@@ -311,10 +304,7 @@ type IfStmt struct {
 	FalseBranch Statement
 }
 
-func (self *IfStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
-}
-
+// CaseStmt usually resides in CompoundStmt
 type SwitchStmt struct {
 	Node
 	Cond Expression
@@ -331,18 +321,10 @@ type WhileStmt struct {
 	Body Statement
 }
 
-func (self *WhileStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
-}
-
 type DoStmt struct {
 	Node
 	Cond Expression
 	Body Statement
-}
-
-func (self *DoStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
 }
 
 type DeclStmt struct {
@@ -364,10 +346,8 @@ type ForStmt struct {
 	Cond Expression
 	Step Expression
 	Body Statement
-}
-
-func (self *ForStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
+	// if Decl exists, this points to a subscope, else it equals to parent scope
+	Scope *SymbolScope
 }
 
 type GotoStmt struct {
@@ -375,24 +355,12 @@ type GotoStmt struct {
 	Label string
 }
 
-func (self *GotoStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
-}
-
 type ContinueStmt struct {
 	Node
 }
 
-func (self *ContinueStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
-}
-
 type BreakStmt struct {
 	Node
-}
-
-func (self *BreakStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
 }
 
 type CompoundStmt struct {
@@ -401,6 +369,7 @@ type CompoundStmt struct {
 	Scope *SymbolScope
 }
 
-func (self *CompoundStmt) Repr() string {
-	return fmt.Sprintf("%v", *self)
+type ExprStmt struct {
+	Node
+	Expr Expression
 }

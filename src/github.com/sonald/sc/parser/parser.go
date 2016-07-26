@@ -20,7 +20,7 @@ type Parser struct {
 	lex             *lexer.Scanner
 	tokens          [NR_LA]lexer.Token // support 4-lookahead
 	cursor          int
-	eot             bool // meat EOT
+	eot             bool // meet EOT
 	ctx             *AstContext
 	currentScope    *SymbolScope
 	tu              *TranslationUnit
@@ -550,7 +550,10 @@ func (self *Parser) parseCompoundStmt() *CompoundStmt {
 		if self.peek(0).Kind == lexer.RBRACE {
 			break
 		}
-		compound.Stmts = append(compound.Stmts, self.parseStatement())
+
+		if stmt := self.parseStatement(); stmt != nil {
+			compound.Stmts = append(compound.Stmts, stmt)
+		}
 	}
 	self.match(lexer.RBRACE)
 	return compound
@@ -573,15 +576,25 @@ func (self *Parser) parseStatement() Statement {
 			stmt = self.parseIfStatement()
 
 		case "switch":
+			stmt = self.parseSwitchStatement()
 		case "case":
+			stmt = self.parseCaseStatement()
 		case "default":
+			stmt = self.parseDefaultStatement()
 		case "while":
+			stmt = self.parseWhileStatement()
 		case "do":
+			stmt = self.parseDoStatement()
 		case "for":
+			stmt = self.parseForStatement()
 		case "goto":
+			stmt = self.parseGotoStatement()
 		case "continue":
+			stmt = self.parseContinueStatement()
 		case "break":
+			stmt = self.parseBreakStatement()
 		case "return":
+			stmt = self.parseReturnStatement()
 		case "sizeof":
 			// sizeof expr
 			stmt = self.parseExprStatement()
@@ -599,13 +612,19 @@ func (self *Parser) parseStatement() Statement {
 		if tok.Kind == lexer.LBRACE {
 			stmt = self.parseCompoundStmt()
 		} else if tok.Kind == lexer.IDENTIFIER && self.peek(1).Kind == lexer.COLON {
-			// labeled stmt
+			stmt = self.parseLabelStatement()
 		} else {
 			stmt = self.parseExprStatement()
 		}
 	}
 
-	util.Printf("parsed stmt %s\n", reflect.TypeOf(stmt).Elem().Name())
+	if reflect.ValueOf(stmt).IsNil() {
+		stmt = nil
+	}
+
+	if stmt != nil {
+		util.Printf("parsed stmt %s\n", reflect.TypeOf(stmt).Elem().Name())
+	}
 	return stmt
 }
 
@@ -624,6 +643,218 @@ func (self *Parser) parseIfStatement() *IfStmt {
 	}
 
 	return ifStmt
+}
+func (self *Parser) parseSwitchStatement() *SwitchStmt {
+	defer self.trace("")()
+
+	var switchStmt = &SwitchStmt{Node: Node{self.ctx}}
+	self.next()
+	self.match(lexer.LPAREN)
+	switchStmt.Cond = self.parseExpression(0)
+	self.match(lexer.RPAREN)
+	switchStmt.Body = self.parseStatement()
+
+	return switchStmt
+}
+
+func (self *Parser) tolerableParse(rule func() Ast, follow ...lexer.Token) (retVal Ast) {
+	defer self.trace("")()
+	defer func() {
+		if p := recover(); p != nil {
+			util.Printf(util.Parser, util.Critical, "Parse Error, ignore until %v\n", follow[0])
+			tok := self.peek(0)
+			for {
+				for _, next := range follow {
+					if next.Kind == tok.Kind {
+						return
+					}
+				}
+				tok = self.next()
+			}
+			retVal = nil
+		}
+	}()
+
+	retVal = rule()
+	return
+}
+
+func (self *Parser) mayIgnore(exp lexer.Kind) bool {
+	if self.peek(0).Kind == exp {
+		self.next()
+		return true
+	} else {
+		return false
+	}
+}
+
+func (self *Parser) parseDoStatement() *DoStmt {
+	defer self.trace("")()
+
+	var (
+		doStmt = &DoStmt{Node: Node{self.ctx}}
+		tok    lexer.Token
+	)
+
+	self.next()
+	doStmt.Body = self.parseStatement()
+	if tok = self.next(); tok.AsString() != "while" {
+		self.parseError(tok, "exepect while")
+	}
+	self.match(lexer.LPAREN)
+	doStmt.Cond = self.parseExpression(0)
+	self.match(lexer.RPAREN)
+	self.mayIgnore(lexer.SEMICOLON)
+
+	return doStmt
+}
+
+func (self *Parser) parseWhileStatement() *WhileStmt {
+	defer self.trace("")()
+
+	var (
+		whileStmt = &WhileStmt{Node: Node{self.ctx}}
+	)
+
+	self.next()
+	self.match(lexer.LPAREN)
+	whileStmt.Cond = self.parseExpression(0)
+	self.match(lexer.RPAREN)
+	whileStmt.Body = self.parseStatement()
+
+	return whileStmt
+}
+
+func (self *Parser) parseLabelStatement() *LabelStmt {
+	defer self.trace("")()
+
+	var labelStmt = &LabelStmt{Node: Node{self.ctx}}
+
+	tok := self.next()
+	if tok.Kind != lexer.IDENTIFIER {
+		self.parseError(tok, "expect identifier")
+	}
+	labelStmt.Label = tok.AsString()
+	self.match(lexer.COLON)
+	labelStmt.Stmt = self.parseStatement()
+	return labelStmt
+}
+
+func (self *Parser) parseGotoStatement() *GotoStmt {
+	defer self.trace("")()
+
+	var gotoStmt = &GotoStmt{Node: Node{self.ctx}}
+
+	self.next()
+	tok := self.next()
+	if tok.Kind != lexer.IDENTIFIER {
+		self.parseError(tok, "expect identifier")
+	}
+	gotoStmt.Label = tok.AsString()
+	self.match(lexer.SEMICOLON)
+	return gotoStmt
+}
+
+func (self *Parser) parseContinueStatement() *ContinueStmt {
+	defer self.trace("")()
+
+	var continueStmt = &ContinueStmt{Node: Node{self.ctx}}
+
+	self.next()
+	self.match(lexer.SEMICOLON)
+
+	return continueStmt
+}
+
+func (self *Parser) parseBreakStatement() *BreakStmt {
+	defer self.trace("")()
+
+	var breakStmt = &BreakStmt{Node: Node{self.ctx}}
+
+	self.next()
+	self.match(lexer.SEMICOLON)
+
+	return breakStmt
+}
+
+func (self *Parser) parseReturnStatement() *ReturnStmt {
+	defer self.trace("")()
+
+	var returnStmt = &ReturnStmt{Node: Node{self.ctx}}
+
+	self.next()
+	if self.peek(0).Kind != lexer.SEMICOLON {
+		returnStmt.Expr = self.parseExpression(0)
+	}
+	self.match(lexer.SEMICOLON)
+
+	return returnStmt
+}
+
+// there are two kinds of for ...
+func (self *Parser) parseForStatement() *ForStmt {
+	defer self.trace("")()
+
+	var (
+		forStmt  = &ForStmt{Node: Node{self.ctx}}
+		tok      lexer.Token
+		newScope bool = false
+	)
+	self.next()
+	self.match(lexer.LPAREN)
+
+	defer func() {
+		if newScope {
+			self.PopScope()
+		}
+	}()
+
+	forStmt.Scope = self.currentScope
+	//FIXME: only auto/static is allowed storage class here
+	//FIXME: so struct decl itself is not auto or static
+	tok = self.peek(0)
+	if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
+		util.Println("parse decl in for")
+		forStmt.Scope = self.PushScope()
+		newScope = true
+		forStmt.Decl = self.parseDeclStatement()
+	} else {
+		forStmt.Init = self.parseExpression(0)
+		self.match(lexer.SEMICOLON)
+	}
+
+	forStmt.Cond = self.parseExpression(0)
+	self.match(lexer.SEMICOLON)
+
+	forStmt.Step = self.parseExpression(0)
+
+	self.match(lexer.RPAREN)
+	forStmt.Body = self.parseStatement()
+
+	return forStmt
+}
+
+func (self *Parser) parseCaseStatement() *CaseStmt {
+	defer self.trace("")()
+
+	var caseStmt = &CaseStmt{Node: Node{self.ctx}}
+	self.next()
+	caseStmt.ConstExpr = self.parseExpression(0)
+	self.match(lexer.COLON)
+	caseStmt.Stmt = self.parseStatement()
+
+	return caseStmt
+}
+
+func (self *Parser) parseDefaultStatement() *DefaultStmt {
+	defer self.trace("")()
+
+	var defaultStmt = &DefaultStmt{Node: Node{self.ctx}}
+	self.next()
+	self.match(lexer.COLON)
+	defaultStmt.Stmt = self.parseStatement()
+
+	return defaultStmt
 }
 
 func (self *Parser) parseDeclStatement() *DeclStmt {
@@ -666,12 +897,23 @@ func (self *Parser) parseDeclStatement() *DeclStmt {
 	return declStmt
 }
 
-func (self *Parser) parseExprStatement() Expression {
+func (self *Parser) parseExprStatement() (ret *ExprStmt) {
 	defer self.trace("")()
-	expr := self.parseExpression(0)
-	self.match(lexer.SEMICOLON)
+	//defer self.handlePanic(lexer.SEMICOLON)
 
-	return expr
+	var exprStmt = &ExprStmt{Node: Node{self.ctx}}
+
+	exprStmt.Expr = self.tolerableParse(func() Ast {
+		return self.parseExpression(0)
+	}, lexer.MakeToken(lexer.SEMICOLON, ";"))
+	self.mayIgnore(lexer.SEMICOLON)
+
+	if exprStmt.Expr == nil {
+		util.Printf(util.Parser, util.Warning, "null expression")
+		return nil
+	}
+
+	return exprStmt
 }
 
 type Associativity int
@@ -704,10 +946,16 @@ type operation struct {
 // operation templates
 var operations map[lexer.Kind]*operation
 
-// alloc new operation by copying specific template
-func newOperation(tok lexer.Token) *operation {
-	var op = *operations[tok.Kind]
-	op.Token = tok
+// alloc new operation by copying specific template, this is only useful
+// when tok value is needed such as IDENTIFIER
+func (self *Parser) newOperation(tok lexer.Token) *operation {
+	var op operation
+	if _, valid := operations[tok.Kind]; valid {
+		op = *operations[tok.Kind]
+		op.Token = tok
+	} else {
+		op = *operations[lexer.ERROR]
+	}
 	return &op
 }
 
@@ -986,20 +1234,20 @@ func literal_nud(p *Parser, op *operation) Expression {
 	return nil
 }
 
-func (self *Parser) parseExpression(rbp int) Expression {
+func (self *Parser) parseExpression(rbp int) (ret Expression) {
 	defer self.trace("")()
 
 	if self.peek(0).Kind == lexer.SEMICOLON {
 		return nil
 	}
 
-	operand := newOperation(self.peek(0))
+	operand := self.newOperation(self.peek(0))
 	lhs := operand.nud(self, operand)
 
-	op := newOperation(self.peek(0))
+	op := self.newOperation(self.peek(0))
 	for rbp < op.LedPred {
 		lhs = op.led(self, lhs, op)
-		op = newOperation(self.peek(0))
+		op = self.newOperation(self.peek(0))
 	}
 
 	return lhs
@@ -1307,10 +1555,42 @@ func (self *Parser) DumpAst() {
 			}
 			scope = prev
 
+		case *ExprStmt:
+			e := ast.(*ExprStmt)
+			log("ExprStmt")
+			stack++
+			visit(e.Expr)
+			stack--
+
 		case *LabelStmt:
+			e := ast.(*LabelStmt)
+			log(fmt.Sprintf("LabelStmt(%s)", e.Label))
+			stack++
+			visit(e.Stmt)
+			stack--
+
 		case *CaseStmt:
+			e := ast.(*CaseStmt)
+			log("CaseStmt")
+			stack++
+			visit(e.ConstExpr)
+			visit(e.Stmt)
+			stack--
+
 		case *DefaultStmt:
+			e := ast.(*DefaultStmt)
+			log("DefaultStmt")
+			stack++
+			visit(e.Stmt)
+			stack--
+
 		case *ReturnStmt:
+			e := ast.(*ReturnStmt)
+			log("ReturnStmt")
+			stack++
+			visit(e.Expr)
+			stack--
+
 		case *IfStmt:
 			e := ast.(*IfStmt)
 			log("IfStmt")
@@ -1325,8 +1605,29 @@ func (self *Parser) DumpAst() {
 			stack--
 
 		case *SwitchStmt:
+			e := ast.(*SwitchStmt)
+			log("SwitchStmt")
+			stack++
+			visit(e.Cond)
+			visit(e.Body)
+			stack--
+
 		case *WhileStmt:
+			e := ast.(*WhileStmt)
+			log("WhileStmt")
+			stack++
+			visit(e.Cond)
+			visit(e.Body)
+			stack--
+
 		case *DoStmt:
+			e := ast.(*DoStmt)
+			log("DoStmt")
+			stack++
+			visit(e.Body)
+			visit(e.Cond)
+			stack--
+
 		case *DeclStmt:
 			e := ast.(*DeclStmt)
 			log("DeclStmt")
@@ -1337,9 +1638,33 @@ func (self *Parser) DumpAst() {
 			stack--
 
 		case *ForStmt:
+			e := ast.(*ForStmt)
+			var prev *SymbolScope
+			prev, scope = scope, e.Scope
+
+			log("ForStmt")
+			stack++
+			if e.Decl != nil {
+				visit(e.Decl)
+			} else {
+				visit(e.Init)
+			}
+			visit(e.Cond)
+			visit(e.Step)
+			visit(e.Body)
+			stack--
+			scope = prev
+
 		case *GotoStmt:
+			e := ast.(*GotoStmt)
+			log(fmt.Sprintf("Goto(%s)", e.Label))
+
 		case *ContinueStmt:
+			log("ContinueStmt")
+
 		case *BreakStmt:
+			log("BreakStmt")
+
 		case *CompoundStmt:
 			e := ast.(*CompoundStmt)
 			var prev *SymbolScope
@@ -1364,15 +1689,6 @@ func (self *Parser) handlePanic(kd lexer.Kind) {
 	defer self.trace("")()
 	if p := recover(); p != nil {
 		util.Printf(util.Parser, util.Critical, "Parse Error: %v\n", p)
-
-		var pcs []uintptr
-		if npc := runtime.Callers(0, pcs); npc > 0 {
-			for _, pc := range pcs {
-				f, l := runtime.FuncForPC(pc).FileLine(pc)
-				util.Printf("%s:%d\n", f, l)
-			}
-		}
-
 		for tok := self.next(); tok.Kind != lexer.EOT && tok.Kind != kd; tok = self.next() {
 		}
 	}
@@ -1493,4 +1809,5 @@ func init() {
 
 	operations[lexer.SEMICOLON] = &operation{lexer.Token{}, NoAssoc, -1, -1, error_nud, expr_led}
 
+	operations[lexer.ERROR] = &operation{lexer.Token{}, NoAssoc, -1, -1, error_nud, error_led}
 }
