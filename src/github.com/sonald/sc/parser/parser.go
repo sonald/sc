@@ -14,8 +14,6 @@ import (
 //maximum lookaheads
 const NR_LA = 4
 
-type ParsingContext int
-
 type Parser struct {
 	lex             *lexer.Scanner
 	tokens          [NR_LA]lexer.Token // support 4-lookahead
@@ -102,10 +100,13 @@ func (self *Parser) Parse(opts *ParseOption) Ast {
 
 // translation-unit: external-declaration+
 func (self *Parser) parseTU(opts *ParseOption) Ast {
+	defer self.trace("")()
+
 	self.tu = &TranslationUnit{}
 	self.tu.filename = opts.filename
 	self.effectiveParent = self.tu
 	self.ctx.top.Owner = self.tu
+
 	for self.peek(0).Kind != lexer.EOT {
 		self.parseExternalDecl()
 	}
@@ -245,17 +246,25 @@ func (self *Parser) parseDeclarator(sym *Symbol) Ast {
 	self.AddSymbol(&newSym)
 
 	var decl Ast
+	var nonPointer bool = true
 
 	tok := self.next()
 	if tok.Kind == lexer.MUL {
 		newSym.Type = &Pointer{newSym.Type}
 		tok = self.next()
+		nonPointer = false
 	}
 
 	if tok.Kind != lexer.IDENTIFIER {
 		self.parseError(tok, "expect identifier")
 	}
 	newSym.Name = tok
+	if _, isRec := sym.Type.(*RecordType); nonPointer && isRec {
+		var rt = sym.Type.(*RecordType)
+		if recSym := self.LookupTypeSymbol(rt.Name); recSym != nil {
+			self.parseError(tok, "field has incomplete type "+rt.Name)
+		}
+	}
 
 	switch self.peek(0).Kind {
 	case lexer.OPEN_BRACKET: // array
@@ -336,7 +345,6 @@ func (self *Parser) parseRecordType() SymbolType {
 	ret.Union = tok.AsString() == "union"
 
 	if tok = self.next(); tok.Kind == lexer.IDENTIFIER {
-		//TODO: check redeclaration here
 		ret.Name = tok.AsString()
 		recSym.Name = tok
 		if ty := self.LookupUserType(ret.Name); ty != nil {
@@ -366,6 +374,13 @@ func (self *Parser) parseRecordType() SymbolType {
 				self.tu.recordDecls = append(self.tu.recordDecls, recDecl)
 			}
 		} else {
+			// if this is top level of record decl, skip it and continue
+			if _, ok := self.currentScope.Owner.(*RecordDecl); !ok {
+				util.Printf(util.Parser, util.Warning, p)
+				for tok := self.next(); tok.Kind != lexer.RBRACE; tok = self.next() {
+				}
+				self.mayIgnore(lexer.SEMICOLON)
+			}
 			panic(p) //propagate
 		}
 	}()
@@ -664,6 +679,9 @@ func (self *Parser) tolerableParse(rule func() Ast, follow ...lexer.Token) (retV
 			util.Printf(util.Parser, util.Critical, "Parse Error, ignore until %v\n", follow[0])
 			tok := self.peek(0)
 			for {
+				if tok.Kind == lexer.EOT {
+					panic(p)
+				}
 				for _, next := range follow {
 					if next.Kind == tok.Kind {
 						return
@@ -751,7 +769,7 @@ func (self *Parser) parseGotoStatement() *GotoStmt {
 		self.parseError(tok, "expect identifier")
 	}
 	gotoStmt.Label = tok.AsString()
-	self.match(lexer.SEMICOLON)
+	self.mayIgnore(lexer.SEMICOLON)
 	return gotoStmt
 }
 
@@ -761,7 +779,7 @@ func (self *Parser) parseContinueStatement() *ContinueStmt {
 	var continueStmt = &ContinueStmt{Node: Node{self.ctx}}
 
 	self.next()
-	self.match(lexer.SEMICOLON)
+	self.mayIgnore(lexer.SEMICOLON)
 
 	return continueStmt
 }
@@ -772,7 +790,7 @@ func (self *Parser) parseBreakStatement() *BreakStmt {
 	var breakStmt = &BreakStmt{Node: Node{self.ctx}}
 
 	self.next()
-	self.match(lexer.SEMICOLON)
+	self.mayIgnore(lexer.SEMICOLON)
 
 	return breakStmt
 }
@@ -786,7 +804,7 @@ func (self *Parser) parseReturnStatement() *ReturnStmt {
 	if self.peek(0).Kind != lexer.SEMICOLON {
 		returnStmt.Expr = self.parseExpression(0)
 	}
-	self.match(lexer.SEMICOLON)
+	self.mayIgnore(lexer.SEMICOLON)
 
 	return returnStmt
 }
@@ -899,7 +917,6 @@ func (self *Parser) parseDeclStatement() *DeclStmt {
 
 func (self *Parser) parseExprStatement() (ret *ExprStmt) {
 	defer self.trace("")()
-	//defer self.handlePanic(lexer.SEMICOLON)
 
 	var exprStmt = &ExprStmt{Node: Node{self.ctx}}
 

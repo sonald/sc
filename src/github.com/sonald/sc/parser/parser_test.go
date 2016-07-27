@@ -82,6 +82,21 @@ struct Tree {
     struct Tree Left, *Right;
 } tree;
 
+/*
+struct Node {
+    int payload;
+    const struct Node Left, *Right;
+} nd;
+
+// indirect nest
+struct Node {
+    int payload;
+    struct Node2 child;
+} nd;
+struct Node2 {
+	struct Node val;
+};
+*/
 `
 	opts := ParseOption{
 		filename: "./test.txt",
@@ -206,6 +221,11 @@ int main(int arg)
 		--arg;
 
 	do --arg while (arg > 0);
+
+	if (arg > 0) 
+		return 2
+	else
+		return 3
 }
 `
 
