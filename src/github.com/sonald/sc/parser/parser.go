@@ -27,11 +27,9 @@ type Parser struct {
 }
 
 type ParseOption struct {
-	filename    string
-	reader      io.Reader
-	dumpAst     bool
-	dumpSymbols bool
-	verbose     bool // log call trace
+	Filename string
+	Reader   io.Reader
+	Verbose  bool // log call trace
 }
 
 func NewParser() *Parser {
@@ -88,12 +86,12 @@ func (self *Parser) match(kd lexer.Kind) {
 
 // the only entry
 func (self *Parser) Parse(opts *ParseOption) Ast {
-	self.lex = lexer.NewScanner(opts.reader)
+	self.lex = lexer.NewScanner(opts.Reader)
 	for i := range self.tokens {
 		self.tokens[i] = self.getNextToken()
 	}
 
-	self.verbose = opts.verbose
+	self.verbose = opts.Verbose
 
 	return self.parseTU(opts)
 }
@@ -103,7 +101,7 @@ func (self *Parser) parseTU(opts *ParseOption) Ast {
 	defer self.trace("")()
 
 	self.tu = &TranslationUnit{}
-	self.tu.filename = opts.filename
+	self.tu.filename = opts.Filename
 	self.effectiveParent = self.tu
 	self.ctx.top.Owner = self.tu
 
