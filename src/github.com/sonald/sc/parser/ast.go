@@ -373,3 +373,279 @@ type ExprStmt struct {
 	Node
 	Expr Expression
 }
+
+// walk stage
+type WalkStage int
+
+const (
+	WalkerPropagate WalkStage = iota
+	WalkerBubbleUp
+)
+
+type AstWalker interface {
+}
+
+func WalkAst(top Ast, wk AstWalker) {
+	var wkValue = reflect.ValueOf(wk)
+	var visit func(ast Ast)
+
+	var tryCall = func(stage WalkStage, ast Ast) {
+		var method = wkValue.FieldByName("Walk" + reflect.TypeOf(ast).Elem().Name())
+		if method.IsValid() {
+			method.Call([]reflect.Value{reflect.ValueOf(stage), reflect.ValueOf(ast)})
+		}
+	}
+
+	visit = func(ast Ast) {
+		switch ast.(type) {
+		case *TranslationUnit:
+			tu := ast.(*TranslationUnit)
+			tryCall(WalkerPropagate, ast)
+			for _, d := range tu.varDecls {
+				visit(d)
+			}
+
+			for _, d := range tu.recordDecls {
+				visit(d)
+			}
+
+			for _, d := range tu.funcDecls {
+				visit(d)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *IntLiteralExpr:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *CharLiteralExpr:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *StringLiteralExpr:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *BinaryOperation:
+			var e = ast.(*BinaryOperation)
+			tryCall(WalkerPropagate, ast)
+			visit(e.LHS)
+			visit(e.RHS)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *DeclRefExpr:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *UnaryOperation:
+			var e = ast.(*UnaryOperation)
+			tryCall(WalkerPropagate, ast)
+			visit(e.expr)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *ConditionalOperation:
+			e := ast.(*ConditionalOperation)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Cond)
+			visit(e.True)
+			visit(e.False)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *ArraySubscriptExpr:
+			e := ast.(*ArraySubscriptExpr)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Target)
+			visit(e.Sub)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *MemberExpr:
+			e := ast.(*MemberExpr)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Target)
+			visit(e.Member)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *FunctionCall:
+			e := ast.(*FunctionCall)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Func)
+			for _, arg := range e.Args {
+				visit(arg)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *CompoundAssignExpr:
+			var e = ast.(*CompoundAssignExpr)
+			tryCall(WalkerPropagate, ast)
+			visit(e.LHS)
+			visit(e.RHS)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *CastExpr:
+			e := ast.(*CastExpr)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Expr)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *CompoundLiteralExpr:
+			e := ast.(*CompoundLiteralExpr)
+			tryCall(WalkerPropagate, ast)
+			visit(e.InitList)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *InitListExpr:
+			e := ast.(*InitListExpr)
+			tryCall(WalkerPropagate, ast)
+			for _, init := range e.inits {
+				visit(init)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *FieldDecl:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *RecordDecl:
+			e := ast.(*RecordDecl)
+			tryCall(WalkerPropagate, ast)
+			for _, f := range e.Fields {
+				visit(f)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *VariableDecl:
+			e := ast.(*VariableDecl)
+			tryCall(WalkerPropagate, ast)
+			if e.init != nil {
+				visit(e.init)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *ParamDecl:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *FunctionDecl:
+			e := ast.(*FunctionDecl)
+			tryCall(WalkerPropagate, ast)
+			for _, arg := range e.Args {
+				visit(arg)
+			}
+
+			if e.Body != nil {
+				visit(e.Body)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *ExprStmt:
+			e := ast.(*ExprStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Expr)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *LabelStmt:
+			e := ast.(*LabelStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Stmt)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *CaseStmt:
+			e := ast.(*CaseStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.ConstExpr)
+			visit(e.Stmt)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *DefaultStmt:
+			e := ast.(*DefaultStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Stmt)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *ReturnStmt:
+			e := ast.(*ReturnStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Expr)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *IfStmt:
+			e := ast.(*IfStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Cond)
+			if e.TrueBranch != nil {
+				visit(e.TrueBranch)
+			}
+			if e.FalseBranch != nil {
+				visit(e.FalseBranch)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *SwitchStmt:
+			e := ast.(*SwitchStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Cond)
+			visit(e.Body)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *WhileStmt:
+			e := ast.(*WhileStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Cond)
+			visit(e.Body)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *DoStmt:
+			e := ast.(*DoStmt)
+			tryCall(WalkerPropagate, ast)
+			visit(e.Body)
+			visit(e.Cond)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *DeclStmt:
+			e := ast.(*DeclStmt)
+			tryCall(WalkerPropagate, ast)
+			for _, stmt := range e.Decls {
+				visit(stmt)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *ForStmt:
+			e := ast.(*ForStmt)
+			tryCall(WalkerPropagate, ast)
+			if e.Decl != nil {
+				visit(e.Decl)
+			} else {
+				visit(e.Init)
+			}
+			visit(e.Cond)
+			visit(e.Step)
+			visit(e.Body)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *GotoStmt:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *ContinueStmt:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *BreakStmt:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *CompoundStmt:
+			e := ast.(*CompoundStmt)
+			tryCall(WalkerPropagate, ast)
+			for _, stmt := range e.Stmts {
+				visit(stmt)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		default:
+			break
+		}
+	}
+
+	visit(top)
+}
