@@ -10,11 +10,11 @@ import (
 
 func TestParseTokens(t *testing.T) {
 	opts := ParseOption{
-		filename: "./test.txt",
+		Filename: "./test.txt",
 	}
 
 	p := NewParser()
-	if f, err := os.Open(opts.filename); err == nil {
+	if f, err := os.Open(opts.Filename); err == nil {
 		p.lex = lexer.NewScanner(f)
 	}
 
@@ -36,9 +36,26 @@ func TestParseScope(t *testing.T) {
 func TestParseDecls(t *testing.T) {
 	var text = `
 static const int *id, *id2;
-register int global_var;
+register unsigned int global_var;
+double d;
+char unsigned ch = 2;
+signed int signed iss; // this is ok, but should be warned
+signed long long int lli;
+int long il;
+int signed c;
+void* fp;
+int int int iii;
+short int si;
+long long long lll;
 
-static const int add(const int *a, const int b);
+short long sl;
+char long cl;
+short int long il;
+unsigned int signed ius; // this is error, shoud be panic
+char int ci;
+
+void* fp = 0;
+
 
 // only one dimension supported now
 float kernel[10];
@@ -58,19 +75,17 @@ struct Tree {
     struct Tree * Left, *Right;
 } Tree;
 
+static const int add(const int *a, const int b);
 `
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
-	if opts.dumpSymbols {
-		p.DumpSymbols()
-	}
 	p.DumpAst()
 
 }
@@ -99,17 +114,14 @@ struct Node2 {
 */
 `
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
-	if opts.dumpSymbols {
-		p.DumpSymbols()
-	}
 	p.DumpAst()
 
 }
@@ -135,11 +147,11 @@ int main(int arg)
 `
 
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
@@ -159,11 +171,11 @@ int main(int arg)
 `
 
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
@@ -197,11 +209,11 @@ _done:
 `
 
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
@@ -230,11 +242,11 @@ int main(int arg)
 `
 
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
@@ -268,19 +280,16 @@ int foo(int a, int b)
 	`
 
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
 	p.DumpAst()
 
-	if opts.dumpSymbols {
-		p.DumpSymbols()
-	}
 }
 
 func TestParseIllegalExpr(t *testing.T) {
@@ -298,19 +307,16 @@ int foo(int a, int b)
 	`
 
 	opts := ParseOption{
-		filename: "./test.txt",
-		verbose:  true,
+		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
-	opts.reader = strings.NewReader(text)
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
 	p.Parse(&opts)
 
 	p.DumpAst()
 
-	if opts.dumpSymbols {
-		p.DumpSymbols()
-	}
 }
 
 func TestMain(m *testing.M) {

@@ -68,11 +68,26 @@ func (q *QualifiedType) String() string {
 	return fmt.Sprintf("%s %s", q.Qualifier, q.Base)
 }
 
+type VoidType struct {
+}
+
+func (v *VoidType) String() string {
+	return "void"
+}
+
+//char, short, int, long, long long
 type IntegerType struct {
+	Unsigned bool
+	Kind     string
 }
 
 func (i *IntegerType) String() string {
-	return "int"
+	var s = ""
+	if i.Unsigned {
+		s += "unsigned "
+	}
+
+	return s + i.Kind
 }
 
 type FloatType struct {
@@ -80,6 +95,13 @@ type FloatType struct {
 
 func (i *FloatType) String() string {
 	return "float"
+}
+
+type DoubleType struct {
+}
+
+func (i *DoubleType) String() string {
+	return "double"
 }
 
 type Pointer struct {

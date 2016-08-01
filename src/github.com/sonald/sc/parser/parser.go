@@ -137,10 +137,138 @@ func (self *Parser) parseError(tok lexer.Token, msg string) {
 		tok.Line, tok.Column, msg))
 }
 
-func (self *Parser) parseTypeDecl(sym *Symbol) {
+func (self *Parser) parseBaseType(sym *Symbol) {
 	defer self.trace("")()
 
-	var ty SymbolType
+	tok := self.peek(0)
+
+	if sym.Type != nil {
+		if _, qualified := sym.Type.(*QualifiedType); !qualified {
+			self.parseError(tok, "multiple type specifier")
+		}
+	}
+
+	var (
+		ty               SymbolType
+		l, i, c, s       int
+		unsigned, signed int
+	)
+
+done:
+	for {
+		ts := tok.AsString()
+		switch ts {
+		case "int", "long", "char", "short":
+			self.next()
+			if ts == "int" {
+				i += 1
+			} else if ts == "char" {
+				c += 1
+			} else if ts == "short" {
+				s += 1
+			} else if ts == "long" {
+				l += 1
+			}
+			if ty != nil {
+				self.parseError(tok, "invalid type")
+			}
+
+		case "unsigned":
+			self.next()
+			unsigned += 1
+		case "signed":
+			self.next()
+			signed += 1
+			break
+		case "void":
+			self.next()
+			ty = &VoidType{}
+			break done
+		case "float":
+			self.next()
+			ty = &FloatType{}
+			break done
+		case "double":
+			self.next()
+			ty = &DoubleType{}
+			break done
+		case "union", "struct":
+			ty = self.parseRecordType()
+			break done
+
+		default:
+			self.parseError(tok, "unknown type specifier")
+		}
+
+		tok = self.peek(0)
+		if !isTypeSpecifier(tok) {
+			break
+		}
+	}
+
+	var (
+		err1 = "%s can not combine with %s type specifier"
+		err2 = "%s is invalid type"
+	)
+	if ty == nil {
+		ity := &IntegerType{}
+		if l > 0 {
+			if s > 0 {
+				self.parseError(tok, fmt.Sprintf(err1, "long", "short"))
+			} else if c > 0 {
+				self.parseError(tok, fmt.Sprintf(err2, "long char"))
+			}
+
+			if l >= 2 {
+				ity.Kind = "long long"
+			} else {
+				ity.Kind = "long"
+			}
+		} else if i > 0 {
+			if c > 0 {
+				self.parseError(tok, fmt.Sprintf(err1, "char", "int"))
+			} else if s > 0 {
+				ity.Kind = "short"
+			} else {
+				ity.Kind = "int"
+			}
+		} else if s > 0 {
+			if c > 0 {
+				self.parseError(tok, fmt.Sprintf(err1, "char", "short"))
+			} else {
+				ity.Kind = "short"
+			}
+		} else {
+			ity.Kind = "char"
+		}
+
+		if unsigned > 0 {
+			if signed > 0 {
+				self.parseError(tok, fmt.Sprintf(err1, "signed", "unsigned"))
+			}
+			ity.Unsigned = true
+		}
+		ty = ity
+	} else {
+		if i+c+s+l > 0 {
+			//FIXME: better report
+			self.parseError(tok, "cannot combine char/int/short/long with non integral type")
+		}
+	}
+
+	if sym.Type == nil {
+		sym.Type = ty
+	} else {
+		var qty = sym.Type.(*QualifiedType)
+		for qty.Base != nil {
+			qty = qty.Base.(*QualifiedType)
+		}
+		qty.Base = ty
+	}
+}
+
+func (self *Parser) parseTypeDecl(sym *Symbol) {
+	defer self.trace("")()
 
 	for {
 		tok := self.peek(0)
@@ -153,34 +281,7 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 					self.parseError(tok, "multiple storage class specified")
 				}
 			} else if isTypeSpecifier(tok) {
-				if sym.Type != nil {
-					if _, qualified := sym.Type.(*QualifiedType); !qualified {
-						self.parseError(tok, "multiple type specifier")
-					}
-				}
-				switch tok.AsString() {
-				case "int":
-					self.next()
-					ty = &IntegerType{}
-				case "float":
-					self.next()
-					ty = &FloatType{}
-				case "union", "struct":
-					ty = self.parseRecordType()
-
-				default:
-					self.parseError(tok, "not implemented")
-				}
-
-				if sym.Type == nil {
-					sym.Type = ty
-				} else {
-					var qty = sym.Type.(*QualifiedType)
-					for qty.Base != nil {
-						qty = qty.Base.(*QualifiedType)
-					}
-					qty.Base = ty
-				}
+				self.parseBaseType(sym)
 
 			} else if isTypeQualifier(tok) {
 				self.next()
@@ -188,7 +289,7 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 				//self.parseError(tok, "multiple type qualifier specified")
 			} else if tok.AsString() == "inline" {
 				self.next()
-				//ignore now
+				//FIXME: ignore now
 			} else {
 				self.parseError(tok, "invalid declaration specifier")
 			}
@@ -1597,9 +1698,9 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkFunctionDecl = func(ws WalkStage, e *FunctionDecl) {
 		if ws == WalkerPropagate {
-			Push(e.Scope)
 			sym := scope.LookupSymbol(e.Name, false)
 			log(fmt.Sprintf("FuncDecl(%v)", sym))
+			Push(e.Scope)
 			stack++
 		} else {
 			stack--
