@@ -2,32 +2,24 @@ package parser
 
 import (
 	"flag"
-	"github.com/sonald/sc/lexer"
 	"os"
 	"strings"
 	"testing"
 )
 
-func TestParseTokens(t *testing.T) {
+func testTemplate(t *testing.T, text string) Ast {
 	opts := ParseOption{
 		Filename: "./test.txt",
+		Verbose:  true,
 	}
 
+	opts.Reader = strings.NewReader(text)
 	p := NewParser()
-	if f, err := os.Open(opts.Filename); err == nil {
-		p.lex = lexer.NewScanner(f)
-	}
+	ast := p.Parse(&opts)
 
-	for i := 0; i < NR_LA; i++ {
-		p.tokens[i] = p.getNextToken()
-	}
+	p.DumpAst()
 
-	for {
-		if p.next().Kind == lexer.EOT {
-			break
-		}
-	}
-
+	return ast
 }
 
 func TestParseScope(t *testing.T) {
@@ -77,20 +69,43 @@ struct Tree {
 
 static const int add(const int *a, const int b);
 `
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if tu.funcDecls == nil || len(tu.funcDecls) != 1 {
+			t.Errorf("failed to parse func decl")
+		}
+
+		if tu.recordDecls == nil || len(tu.recordDecls) != 3 {
+			t.Errorf("failed to parse some records")
+		}
+
+		if tu.varDecls == nil || len(tu.varDecls) != 17 {
+			t.Errorf("failed to parse some vars")
+		}
 	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
-
 }
 
-func TestDetectLoop(t *testing.T) {
+func TestParseArray(t *testing.T) {
+	var text = `
+float grid[10][10];
+int box[][2];
+int N = 10;
+// int arr[N];
+`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if tu.varDecls == nil || len(tu.varDecls) != 3 {
+			t.Errorf("failed to parse some arrays")
+		}
+	}
+}
+
+//FIXME: this is be done by sema
+func testDetectLoop(t *testing.T) {
 	var text = `
 struct Tree {
     int payload;
@@ -113,17 +128,7 @@ struct Node2 {
 };
 */
 `
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
-	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
-
+	testTemplate(t, text)
 }
 
 func TestParseIf(t *testing.T) {
@@ -145,17 +150,7 @@ int main(int arg)
 			arg += 1;
 }
 `
-
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
-	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
+	testTemplate(t, text)
 }
 
 func TestParseWrongFor(t *testing.T) {
@@ -169,17 +164,7 @@ int main(int arg)
 	}
 }
 `
-
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
-	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
+	testTemplate(t, text)
 }
 
 func TestParseIterate(t *testing.T) {
@@ -207,17 +192,7 @@ _done:
 	return arg;
 }
 `
-
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
-	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
+	testTemplate(t, text)
 }
 
 func TestParseIllegalStmt(t *testing.T) {
@@ -240,17 +215,7 @@ int main(int arg)
 		return 3
 }
 `
-
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
-	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
+	testTemplate(t, text)
 }
 
 func TestParseExpr(t *testing.T) {
@@ -278,18 +243,7 @@ int foo(int a, int b)
 	int c = b[3] + a[2];
 }
 	`
-
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
-	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
-
+	testTemplate(t, text)
 }
 
 func TestParseIllegalExpr(t *testing.T) {
@@ -305,18 +259,7 @@ int foo(int a, int b)
 	int c = b[3]  a[2];
 }
 	`
-
-	opts := ParseOption{
-		Filename: "./test.txt",
-		Verbose:  true,
-	}
-
-	opts.Reader = strings.NewReader(text)
-	p := NewParser()
-	p.Parse(&opts)
-
-	p.DumpAst()
-
+	testTemplate(t, text)
 }
 
 func TestMain(m *testing.M) {

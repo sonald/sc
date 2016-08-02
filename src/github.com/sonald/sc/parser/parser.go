@@ -336,8 +336,34 @@ func (self *Parser) parseFunctionParams(decl *FunctionDecl) {
 	}
 }
 
+//FIXME: support const-expr
+func (self *Parser) parseArray(sym *Symbol) Ast {
+	var aty = &Array{ElemType: sym.Type}
+
+	for {
+		self.match(lexer.OPEN_BRACKET)
+		if tok := self.peek(0); tok.Kind == lexer.CLOSE_BRACKET {
+			aty.Level++
+			aty.Lens = append(aty.Lens, -1) // NOTE: I use -1 means don't know
+		} else if tok.Kind == lexer.INT_LITERAL {
+			aty.Level++
+			aty.Lens = append(aty.Lens, tok.AsInt())
+			self.next()
+		} else {
+			self.parseError(tok, "invalid array type specifier")
+		}
+		self.match(lexer.CLOSE_BRACKET)
+
+		if self.peek(0).Kind != lexer.OPEN_BRACKET {
+			break
+		}
+	}
+
+	sym.Type = aty
+	return &VariableDecl{Sym: sym.Name.AsString()}
+}
+
 //FIXME: support full c99 declarator parsing
-//FIXME: check redeclaration
 func (self *Parser) parseDeclarator(sym *Symbol) Ast {
 	defer self.trace("")()
 
@@ -358,19 +384,8 @@ func (self *Parser) parseDeclarator(sym *Symbol) Ast {
 	newSym.Name = tok
 
 	switch self.peek(0).Kind {
-	case lexer.OPEN_BRACKET: // array
-		self.match(lexer.OPEN_BRACKET)
-		if tok := self.peek(0); tok.Kind == lexer.INT_LITERAL {
-			newSym.Type = &Array{newSym.Type, 1, []int{tok.AsInt()}}
-			self.next()
-		} else if tok.Kind == lexer.CLOSE_BRACKET {
-			newSym.Type = &Array{newSym.Type, 1, []int{-1}} // NOTE: I use -1 means don't know
-		} else {
-			self.parseError(tok, "invalid array type specifier")
-		}
-		self.match(lexer.CLOSE_BRACKET)
-
-		decl = &VariableDecl{Sym: newSym.Name.AsString()}
+	case lexer.OPEN_BRACKET:
+		decl = self.parseArray(&newSym)
 
 	case lexer.LPAREN: // func
 		self.match(lexer.LPAREN)
