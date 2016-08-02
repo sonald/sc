@@ -195,10 +195,12 @@ type RecordDecl struct {
 	Node
 	// Name of Record's Symbol, this symbol's type is identical to
 	// this record variable's type
-	Sym    string
-	Fields []*FieldDecl
-	Loc    lexer.Location
-	Scope  *SymbolScope
+	Sym          string
+	Fields       []*FieldDecl
+	Loc          lexer.Location
+	Scope        *SymbolScope
+	IsDefinition bool
+	Prev         Ast // previous forward declaration of the record
 }
 
 func (self *RecordDecl) Repr() string {

@@ -87,6 +87,48 @@ static const int add(const int *a, const int b);
 	}
 }
 
+func testRecordDesignator(t *testing.T) {
+	var text = `
+struct grid {
+	int flags: 10;
+	int val[2][2];
+} g = {
+	.flags = 0x12,
+};
+
+`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if tu.varDecls == nil || len(tu.varDecls) != 1 {
+			t.Errorf("failed to parse some arrays")
+		}
+	}
+}
+
+func TestForwardDecl(t *testing.T) {
+	var text = `
+struct grid;
+int mul(struct grid* g1, struct grid* g2)
+{
+}
+
+struct grid {
+	int val[2][2];
+};
+
+`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if tu.recordDecls == nil || len(tu.recordDecls) != 2 {
+			t.Errorf("failed to parse some records")
+		}
+	}
+}
+
 func TestParseArray(t *testing.T) {
 	var text = `
 float grid[10][10];

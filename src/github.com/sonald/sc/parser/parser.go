@@ -417,34 +417,14 @@ func (self *Parser) parseDeclarator(sym *Symbol) Ast {
 	return decl
 }
 
-/**
-struct-or-union-specifier:
-	struct-or-union identifier? { struct-declaration-list }
-	struct-or-union identifier
-
-struct-or-union: struct | union
-
-struct-declaration-list: struct-declaration+
-
-struct-declaration: specifier-qualifier-list struct-declarator-list ;
-
-specifier-qualifier-list: ( type-specifier | type-qualifier ) *
-
-struct-declarator-list: struct-declarator
-	struct-declarator-list , struct-declarator
-
-struct-declarator:
-	declarator
-	declarator? : constant-expression
-*/
-
 func (self *Parser) parseRecordType() SymbolType {
 	defer self.trace("")()
 	var (
-		recDecl = &RecordDecl{Node: Node{self.ctx}}
-		recSym  = &Symbol{}
-		ret     = &RecordType{}
-		tok     lexer.Token
+		recDecl   = &RecordDecl{Node: Node{self.ctx}}
+		recSym    = &Symbol{}
+		ret       = &RecordType{}
+		tok       lexer.Token
+		isForward bool
 	)
 
 	tok = self.next()
@@ -454,22 +434,40 @@ func (self *Parser) parseRecordType() SymbolType {
 		ret.Name = tok.AsString()
 		recSym.Name = tok
 		if ty := self.LookupUserType(ret.Name); ty != nil {
-			return ty
+			var decls []*RecordDecl
+			switch self.effectiveParent.(type) {
+			case *DeclStmt:
+				decls = self.effectiveParent.(*DeclStmt).RecordDecls
+			case *TranslationUnit:
+				decls = self.tu.recordDecls
+			default:
+				return ty
+			}
+
+			if next := self.peek(0).Kind; next != lexer.SEMICOLON && next != lexer.LBRACE {
+				return ty
+			}
+			for _, decl := range decls {
+				if decl.Sym == ret.Name && !decl.IsDefinition {
+					recSym = self.LookupTypeSymbol(ret.Name)
+					ret = ty.(*RecordType)
+					isForward = true
+					recDecl.Scope = decl.Scope
+					recDecl.Prev = decl
+					break
+				}
+			}
+
+			if !isForward {
+				return ty
+			}
 		}
 	} else {
 		ret.Name = NextAnonyRecordName()
 	}
+
 	recSym.Type = ret
 	recDecl.Sym = ret.Name
-
-	self.match(lexer.LBRACE)
-
-	//NOTE: we register here so that pointer of this type can be used as field type
-	//FIXME: if parse failed, need to deregister it
-	self.AddUserType(ret)
-	self.AddTypeSymbol(recSym)
-	recDecl.Scope = self.PushScope()
-	recDecl.Scope.Owner = recDecl
 
 	defer func() {
 		self.PopScope()
@@ -490,6 +488,25 @@ func (self *Parser) parseRecordType() SymbolType {
 			panic(p) //propagate
 		}
 	}()
+
+	//NOTE: we register here so that pointer of this type can be used as field type
+	//FIXME: if parse failed, need to deregister it
+
+	if !isForward {
+		self.AddUserType(ret)
+		self.AddTypeSymbol(recSym)
+		recDecl.Scope = self.PushScope()
+	} else {
+		self.currentScope = recDecl.Scope
+	}
+	recDecl.Scope.Owner = recDecl //NOTE: this changes Owner to last definition of the same record
+	if self.peek(0).Kind == lexer.SEMICOLON {
+		//forward declaration
+		return ret
+	}
+
+	self.match(lexer.LBRACE)
+	recDecl.IsDefinition = true
 
 	for {
 		if self.peek(0).Kind == lexer.RBRACE {
@@ -1682,7 +1699,7 @@ func (self *Parser) DumpAst() {
 				ty = "union"
 			}
 
-			log(fmt.Sprintf("RecordDecl(%s %s)", ty, e.Sym))
+			log(fmt.Sprintf("RecordDecl(%s %s prev %p)", ty, e.Sym, e.Prev))
 			stack++
 
 			Push(e.Scope)
