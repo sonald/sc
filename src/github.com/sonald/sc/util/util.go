@@ -36,10 +36,10 @@ func (d Domain) String() string {
 }
 
 const (
-	Info Level = iota
+	Debug Level = iota
+	Info
 	Warning
 	Critical
-	Debug
 )
 
 type color struct {
@@ -73,7 +73,7 @@ func Println(v ...interface{}) {
 		return
 	}
 
-	fmt = strings.Repeat("%v", len(v)-beg) + "\n"
+	fmt = strings.Repeat("%v", len(v)-beg)
 	log.Printf(dom.String()+catalogs[lv].pre+fmt+catalogs[lv].post, v[beg:]...)
 }
 

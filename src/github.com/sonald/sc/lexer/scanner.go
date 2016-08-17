@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"strconv"
 )
 
@@ -665,7 +664,6 @@ func (self *Scanner) Next() Token {
 }
 
 func init() {
-	log.Println("init scanner")
 	kws := []string{
 		"auto", "break", "case", "char", "const", "continue", "default", "do", "double",
 		"else", "enum", "exetrn", "float", "for", "goto", "if", "inline", "int", "long",

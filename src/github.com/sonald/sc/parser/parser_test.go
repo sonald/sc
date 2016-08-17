@@ -48,6 +48,8 @@ char int ci;
 
 void* fp = 0;
 
+//FIXME: const split two types apart, this fails now
+// unsigned const char volatile uccv;
 
 // only one dimension supported now
 float kernel[10];
@@ -87,6 +89,63 @@ static const int add(const int *a, const int b);
 	}
 }
 
+func TestParseComplexDecls(t *testing.T) {
+	var text = `
+int (*ids)[5];
+int (*fp)(void, void);
+int (*const wokers [])(unsigned int);
+// an array of grid (each grid is a two-dim array)
+int (grids[2])[5];
+int* (grids2[2])[5][4];
+int (*const* grids3[2])[5];
+
+char **(*(*(*x)[100])(int, char *, double *const**, void (*)(int **, char [])))[50];
+const unsigned char volatile (
+	*const(
+		*volatile(*volatile const A)(
+			unsigned int (*const)(const char, int, float), char *const*)
+		)[12]
+	)(int (**)[50]);
+
+//typedef int size_t;
+//size_t sz = 2;
+`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if tu.varDecls == nil || len(tu.varDecls) != 7 {
+			t.Errorf("failed to parse some vars")
+		}
+	}
+}
+
+func TestParseTypes(t *testing.T) {
+	var text = `
+(int (*fp)[5])a;
+(int * id[3])a;
+(int (*id)[4])a;
+(int (*)[*])a;
+(int *())a;
+(int (*)(void))a;
+`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		//if tu.funcDecls == nil || len(tu.funcDecls) != 1 {
+		//t.Errorf("failed to parse func decl")
+		//}
+
+		//if tu.recordDecls == nil || len(tu.recordDecls) != 3 {
+		//t.Errorf("failed to parse some records")
+		//}
+
+		if tu.varDecls == nil || len(tu.varDecls) != 1 {
+			t.Errorf("failed to parse some vars")
+		}
+	}
+}
 func testRecordDesignator(t *testing.T) {
 	var text = `
 struct grid {

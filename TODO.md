@@ -1,12 +1,15 @@
 ## internal note
 
 ### parsing
-+ struct/union
-+ type class system
-+ parsing more type-names
-+ support enum
-+ make all errors type of Error, instead of string
-+ parsing typedef's
++ [x] struct/union
++ [x] type class system
++ [ ] parsing more type-names
++ [ ] support enum
++ [ ] make all errors type of Error, instead of string
++ [ ] parsing typedef's
++ [ ] parsing sizeof
++ [x] namespaces (implicitly supported by scopes)
++ [ ] preprocossor
 
 ### semantic stage
 

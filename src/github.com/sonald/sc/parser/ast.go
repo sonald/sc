@@ -12,8 +12,7 @@ type Ast interface {
 }
 
 type AstContext struct {
-	top          *SymbolScope
-	currentScope *SymbolScope
+	top *SymbolScope
 }
 
 type Node struct {

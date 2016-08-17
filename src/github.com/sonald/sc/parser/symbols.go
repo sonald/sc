@@ -58,6 +58,15 @@ type SymbolType interface {
 	String() string
 }
 
+func isSimpleType(s SymbolType) bool {
+	switch s.(type) {
+	case *VoidType, *IntegerType, *FloatType, *DoubleType:
+		return true
+	default:
+		return false
+	}
+}
+
 // decorate base type with qualifier
 type QualifiedType struct {
 	Base SymbolType
@@ -65,7 +74,7 @@ type QualifiedType struct {
 }
 
 func (q *QualifiedType) String() string {
-	return fmt.Sprintf("%s %s", q.Qualifier, q.Base)
+	return fmt.Sprintf("(%s %s)", q.Qualifier, q.Base)
 }
 
 type VoidType struct {
@@ -117,7 +126,11 @@ func (p *Pointer) String() string {
 		}
 		return fmt.Sprintf("struct %s*", s.Name)
 	default:
-		return fmt.Sprintf("%v*", p.Source)
+		if isSimpleType(p.Source) {
+			return fmt.Sprintf("%v*", p.Source)
+		} else {
+			return fmt.Sprintf("(%v*)", p.Source)
+		}
 	}
 }
 
@@ -147,9 +160,19 @@ type Array struct {
 }
 
 func (a *Array) String() string {
-	var s = fmt.Sprintf("%v ", a.ElemType)
+	var s string
+	if isSimpleType(a.ElemType) {
+		s = fmt.Sprintf("%v", a.ElemType)
+	} else {
+		s = fmt.Sprintf("(%v)", a.ElemType)
+	}
+
 	for i := 0; i < a.Level; i++ {
-		s += fmt.Sprintf("[%d]", a.Lens[i])
+		if a.Lens[i] == -1 {
+			s += fmt.Sprintf("[]")
+		} else {
+			s += fmt.Sprintf("[%d]", a.Lens[i])
+		}
 	}
 	return s
 }
@@ -257,6 +280,13 @@ func (sym *Symbol) String() string {
 	}
 
 	return fmt.Sprintf("%v%v %v", s, sym.Type, sym.Name.AsString())
+}
+
+var dummyVariableCounter = 0
+
+func NextDummyVariableName() string {
+	dummyVariableCounter++
+	return fmt.Sprintf("!dummyVar%d", dummyVariableCounter)
 }
 
 type SymbolScope struct {

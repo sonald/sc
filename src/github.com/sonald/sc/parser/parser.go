@@ -48,7 +48,7 @@ func (self *Parser) peek(n int) lexer.Token {
 	}
 
 	tok := self.tokens[n]
-	util.Printf("peek %s(%s)\n", lexer.TokKinds[tok.Kind], tok.AsString())
+	util.Printf(util.Parser, util.Debug, "peek %s(%s)", lexer.TokKinds[tok.Kind], tok.AsString())
 	return tok
 }
 
@@ -302,11 +302,9 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 	util.Printf("parsed type template %v", sym)
 }
 
-func (self *Parser) parseFunctionParams(decl *FunctionDecl) {
+func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
 	defer self.trace("")()
 
-	funcSym := self.LookupSymbol(decl.Name)
-	var ty = funcSym.Type.(*Function)
 	for {
 		if self.peek(0).Kind == lexer.RPAREN {
 			break
@@ -336,84 +334,223 @@ func (self *Parser) parseFunctionParams(decl *FunctionDecl) {
 	}
 }
 
-//FIXME: support const-expr
-func (self *Parser) parseArray(sym *Symbol) Ast {
-	var aty = &Array{ElemType: sym.Type}
-
-	for {
-		self.match(lexer.OPEN_BRACKET)
-		if tok := self.peek(0); tok.Kind == lexer.CLOSE_BRACKET {
-			aty.Level++
-			aty.Lens = append(aty.Lens, -1) // NOTE: I use -1 means don't know
-		} else if tok.Kind == lexer.INT_LITERAL {
-			aty.Level++
-			aty.Lens = append(aty.Lens, tok.AsInt())
-			self.next()
-		} else {
-			self.parseError(tok, "invalid array type specifier")
-		}
-		self.match(lexer.CLOSE_BRACKET)
-
-		if self.peek(0).Kind != lexer.OPEN_BRACKET {
-			break
-		}
-	}
-
-	sym.Type = aty
-	return &VariableDecl{Sym: sym.Name.AsString()}
-}
-
-//FIXME: support full c99 declarator parsing
-func (self *Parser) parseDeclarator(sym *Symbol) Ast {
+func (self *Parser) parseFunctionParamTypes(ty *Function) {
 	defer self.trace("")()
 
-	var newSym = Symbol{Type: sym.Type, Storage: sym.Storage}
-	self.AddSymbol(&newSym)
+	for {
+		if self.peek(0).Kind == lexer.RPAREN {
+			break
+		}
 
-	var decl Ast
+		var tmpl = &Symbol{}
+		self.parseTypeDecl(tmpl)
+		if arg := self.parseDeclarator(tmpl); arg == nil {
+			break
+		} else {
+			switch arg.(type) {
+			case *VariableDecl:
+				var pd = arg.(*VariableDecl).Sym
+				pty := self.LookupSymbol(pd)
+				ty.Args = append(ty.Args, pty.Type)
+				util.Printf("parsed arg type %v", pty.Type)
+			default:
+				self.parseError(self.peek(0), "invalid parameter declaration")
+			}
+		}
 
-	tok := self.next()
-	if tok.Kind == lexer.MUL {
-		newSym.Type = &Pointer{newSym.Type}
-		tok = self.next()
-	}
-
-	if tok.Kind != lexer.IDENTIFIER {
-		self.parseError(tok, "expect identifier")
-	}
-	newSym.Name = tok
-
-	switch self.peek(0).Kind {
-	case lexer.OPEN_BRACKET:
-		decl = self.parseArray(&newSym)
-
-	case lexer.LPAREN: // func
-		self.match(lexer.LPAREN)
-		var fdecl = &FunctionDecl{}
-		decl = fdecl
-		newSym.Type = &Function{Return: newSym.Type}
-		fdecl.Name = newSym.Name.AsString()
-		// when found definition of func, we need to chain fdecl.Scope with body
-		fdecl.Scope = self.PushScope()
-		fdecl.Scope.Owner = fdecl
-		self.parseFunctionParams(fdecl)
-		self.PopScope()
-		self.match(lexer.RPAREN)
-
-	default:
-		decl = &VariableDecl{Sym: newSym.Name.AsString()}
-	}
-
-	if self.peek(0).Kind == lexer.ASSIGN {
-		// parse initializer
-		self.next()
-		switch decl.(type) {
-		case *VariableDecl:
-			decl.(*VariableDecl).init = self.parseInitializerList()
-		default:
-			self.parseError(self.peek(0), "Initializer is not allowed here")
+		if self.peek(0).Kind == lexer.COMMA {
+			self.next()
 		}
 	}
+}
+
+func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
+	defer self.trace("")()
+	type Partial struct {
+		ty   SymbolType
+		hole *SymbolType
+	}
+	var (
+		parseDeclaratorHelper func() Partial
+		decl                  Ast
+		id                    *lexer.Token
+		idLevel               = 0
+		finalSym              = Symbol{Storage: tmpl.Storage}
+		nested                = 0 // nested level
+	)
+
+	//FIXME: support const-expr
+	var parseArray = func() Partial {
+		defer self.trace("")()
+		var partial = Partial{}
+		var aty = &Array{}
+		partial.ty = aty
+		partial.hole = &aty.ElemType
+
+		for {
+			self.match(lexer.OPEN_BRACKET)
+			if tok := self.peek(0); tok.Kind == lexer.CLOSE_BRACKET {
+				aty.Level++
+				aty.Lens = append(aty.Lens, -1) // NOTE: I use -1 means don't know
+			} else if tok.Kind == lexer.INT_LITERAL {
+				aty.Level++
+				aty.Lens = append(aty.Lens, tok.AsInt())
+				self.next()
+			} else {
+				self.parseError(tok, "invalid array type specifier")
+			}
+			self.match(lexer.CLOSE_BRACKET)
+
+			if self.peek(0).Kind != lexer.OPEN_BRACKET {
+				break
+			}
+		}
+
+		return partial
+	}
+
+	parseDeclaratorHelper = func() Partial {
+		nested++
+		defer self.trace(fmt.Sprintf("nested level %d", nested))()
+
+		var basePartial Partial
+		var nestedPartial Partial
+		if nested == 1 {
+			basePartial.ty = tmpl.Type
+		}
+
+		tok := self.peek(0)
+		switch tok.Kind {
+		case lexer.MUL:
+			self.next()
+			basePartial = Partial{&Pointer{}, nil}
+			basePartial.hole = &basePartial.ty.(*Pointer).Source
+			var baseType = basePartial.ty
+			for {
+				if forward := self.peek(0); isTypeQualifier(forward) {
+					self.next()
+					baseType = &QualifiedType{Base: baseType, Qualifier: typeQualifier[forward.AsString()]}
+
+				} else if forward.Kind == lexer.MUL {
+					self.next()
+					baseType = &Pointer{baseType}
+				} else {
+					break
+				}
+			}
+			basePartial.ty = baseType
+		}
+
+		if tok := self.peek(0); tok.Kind == lexer.LPAREN {
+			self.match(lexer.LPAREN)
+			nestedPartial = parseDeclaratorHelper()
+			util.Printf(util.Parser, util.Warning, "level %d: -> nested %v\n", nested, nestedPartial.ty)
+			self.match(lexer.RPAREN)
+		} else if tok.Kind == lexer.IDENTIFIER {
+			self.next()
+			//TODO: assert id == nil
+			id = &tok
+			idLevel = nested
+			finalSym.Name = *id
+			self.AddSymbol(&finalSym)
+		}
+
+		switch self.peek(0).Kind {
+		case lexer.OPEN_BRACKET:
+			var pt = parseArray()
+			util.Printf(util.Parser, util.Warning, "level %d: -> array %v %v\n", nested, pt.ty, pt.hole)
+			if basePartial.ty != nil {
+				*pt.hole = basePartial.ty
+				pt.hole = basePartial.hole
+			}
+
+			if nestedPartial.ty != nil {
+				*nestedPartial.hole = pt.ty
+				nestedPartial.hole = pt.hole
+				basePartial = nestedPartial
+			} else {
+				basePartial = pt
+			}
+
+			if nested == 1 && id != nil {
+				decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+			}
+
+		case lexer.LPAREN: // func
+			self.match(lexer.LPAREN)
+			var pt = Partial{}
+			pt.ty = &Function{Return: basePartial.ty}
+			//pt.hole = basePartial.hole
+			if basePartial.ty != nil {
+				//*pt.hole = basePartial.ty
+				pt.hole = basePartial.hole
+			}
+
+			if nested == 1 && id != nil && idLevel == nested {
+				var fdecl = &FunctionDecl{Node: Node{self.ctx}}
+				decl = fdecl
+				fdecl.Name = id.AsString()
+				// when found definition of func, we need to chain fdecl.Scope with body
+				fdecl.Scope = self.PushScope()
+				fdecl.Scope.Owner = fdecl
+				self.parseFunctionParams(fdecl, pt.ty.(*Function))
+				self.PopScope()
+
+			} else {
+				// this is just a temp scope to capture params
+				if nested == 1 && id != nil {
+					decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+				}
+				self.PushScope()
+				self.parseFunctionParamTypes(pt.ty.(*Function))
+				self.PopScope()
+			}
+			self.match(lexer.RPAREN)
+
+			if nestedPartial.ty != nil {
+				*nestedPartial.hole = pt.ty
+				nestedPartial.hole = pt.hole
+				basePartial = nestedPartial
+			} else {
+				basePartial = pt
+			}
+
+		default:
+			//TODO: error ?
+		}
+
+		//TODO: assert nested level == 0
+		if self.peek(0).Kind == lexer.ASSIGN {
+			// parse initializer
+			self.next()
+			switch decl.(type) {
+			case *VariableDecl:
+				decl.(*VariableDecl).init = self.parseInitializerList()
+			default:
+				self.parseError(self.peek(0), "Initializer is not allowed here")
+			}
+		}
+
+		util.Printf(util.Parser, util.Warning, "level %d: -> %v", nested, basePartial.ty)
+		nested--
+		return basePartial
+	}
+
+	var pt = parseDeclaratorHelper()
+	if pt.hole != nil {
+		*pt.hole = tmpl.Type
+	}
+	finalSym.Type = pt.ty
+
+	if decl == nil && id == nil && pt.ty != nil {
+		// this happens if we are parsing types only (such as func params)
+		// so make a dummy decl
+		finalSym.Name = lexer.MakeToken(lexer.IDENTIFIER, NextDummyVariableName())
+		decl = &VariableDecl{Node: Node{self.ctx}, Sym: finalSym.Name.AsString()}
+		self.AddSymbol(&finalSym)
+	}
+	util.Printf(util.Parser, util.Warning, "level 0: -> %v\n", pt.ty)
+	util.Printf(util.Parser, util.Warning, "parsed %v, sym %v", decl, finalSym)
 	return decl
 }
 
@@ -1857,6 +1994,15 @@ func (self *Parser) DumpAst() {
 func (self *Parser) handlePanic(kd lexer.Kind) {
 	defer self.trace("")()
 	if p := recover(); p != nil {
+		var pcs []uintptr = make([]uintptr, 10)
+		runtime.Callers(2, pcs)
+		for _, pc := range pcs {
+			fun := runtime.FuncForPC(pc)
+			f, l := fun.FileLine(pc)
+
+			util.Printf(util.Parser, util.Critical, "%v:%v", f, l)
+		}
+
 		util.Printf(util.Parser, util.Critical, "Parse Error: %v\n", p)
 		for tok := self.next(); tok.Kind != lexer.EOT && tok.Kind != kd; tok = self.next() {
 		}
@@ -1878,8 +2024,6 @@ func (self *Parser) trace(msg string) func() {
 }
 
 func init() {
-	util.Println(util.Parser, util.Debug, "init parser")
-
 	storages = make(map[string]Storage)
 	storages["auto"] = Auto
 	storages["static"] = Static
