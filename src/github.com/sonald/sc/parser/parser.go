@@ -480,9 +480,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			self.match(lexer.LPAREN)
 			var pt = Partial{}
 			pt.ty = &Function{Return: basePartial.ty}
-			//pt.hole = basePartial.hole
 			if basePartial.ty != nil {
-				//*pt.hole = basePartial.ty
 				pt.hole = basePartial.hole
 			}
 
@@ -516,7 +514,9 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			}
 
 		default:
-			//TODO: error ?
+			if id != nil {
+				decl = &VariableDecl{Node: Node{self.ctx}, Sym: finalSym.Name.AsString()}
+			}
 		}
 
 		//TODO: assert nested level == 0

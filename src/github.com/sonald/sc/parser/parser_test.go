@@ -25,7 +25,7 @@ func testTemplate(t *testing.T, text string) Ast {
 func TestParseScope(t *testing.T) {
 }
 
-func TestParseDecls(t *testing.T) {
+func TestParseSimpleDecls(t *testing.T) {
 	var text = `
 static const int *id, *id2;
 register unsigned int global_var;
@@ -114,7 +114,7 @@ const unsigned char volatile (
 	if tu, ok := ast.(*TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.varDecls == nil || len(tu.varDecls) != 7 {
+		if tu.varDecls == nil || len(tu.varDecls) != 8 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
