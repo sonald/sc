@@ -74,7 +74,11 @@ type QualifiedType struct {
 }
 
 func (q *QualifiedType) String() string {
-	return fmt.Sprintf("(%s %s)", q.Qualifier, q.Base)
+	if _, yes := q.Base.(*Pointer); yes {
+		return fmt.Sprintf("%s %s", q.Base, q.Qualifier)
+	} else {
+		return fmt.Sprintf("%s %s", q.Qualifier, q.Base)
+	}
 }
 
 type VoidType struct {
@@ -274,12 +278,11 @@ type Symbol struct {
 }
 
 func (sym *Symbol) String() string {
-	var s = ""
+	var s = fmt.Sprintf("'%v' %v", sym.Type, sym.Name.AsString())
 	if sym.Storage != NilStorage {
-		s += fmt.Sprint(sym.Storage) + " "
+		s += " " + fmt.Sprint(sym.Storage)
 	}
-
-	return fmt.Sprintf("%v%v %v", s, sym.Type, sym.Name.AsString())
+	return s
 }
 
 var dummyVariableCounter = 0

@@ -1,5 +1,11 @@
 ## internal note
 
+### 
++ [ ] more debugging support
++ [ ] error report (support annotation)
++ [ ] full AST validation in unittest
++ [ ] dump type info in a declaration style (follow-use)
+
 ### parsing
 + [x] struct/union
 + [x] type class system
@@ -10,6 +16,7 @@
 + [ ] parsing sizeof
 + [x] namespaces (implicitly supported by scopes)
 + [ ] preprocossor
++ [ ] parsing type cast
 
 ### semantic stage
 

@@ -36,8 +36,10 @@ signed long long int lli;
 int long il;
 int signed c;
 void* fp;
-int int int iii;
 short int si;
+
+// errors, but better report warnings and proceed
+int int int iii;
 long long long lll;
 
 short long sl;
@@ -48,8 +50,7 @@ char int ci;
 
 void* fp = 0;
 
-//FIXME: const split two types apart, this fails now
-// unsigned const char volatile uccv;
+unsigned const char volatile uccv;
 
 // only one dimension supported now
 float kernel[10];
@@ -83,7 +84,7 @@ static const int add(const int *a, const int b);
 			t.Errorf("failed to parse some records")
 		}
 
-		if tu.varDecls == nil || len(tu.varDecls) != 17 {
+		if tu.varDecls == nil || len(tu.varDecls) != 16 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -93,6 +94,7 @@ func TestParseComplexDecls(t *testing.T) {
 	var text = `
 int (*ids)[5];
 int (*fp)(void, void);
+int *const *const ccfp[];
 int (*const wokers [])(unsigned int);
 // an array of grid (each grid is a two-dim array)
 int (grids[2])[5];
@@ -114,7 +116,7 @@ const unsigned char volatile (
 	if tu, ok := ast.(*TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.varDecls == nil || len(tu.varDecls) != 8 {
+		if tu.varDecls == nil || len(tu.varDecls) != 9 {
 			t.Errorf("failed to parse some vars")
 		}
 	}

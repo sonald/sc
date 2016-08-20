@@ -137,81 +137,26 @@ func (self *Parser) parseError(tok lexer.Token, msg string) {
 		tok.Line, tok.Column, msg))
 }
 
-func (self *Parser) parseBaseType(sym *Symbol) {
+func (self *Parser) parseTypeDecl(sym *Symbol) {
 	defer self.trace("")()
-
-	tok := self.peek(0)
-
-	if sym.Type != nil {
-		if _, qualified := sym.Type.(*QualifiedType); !qualified {
-			self.parseError(tok, "multiple type specifier")
-		}
-	}
-
 	var (
-		ty               SymbolType
-		l, i, c, s       int
-		unsigned, signed int
-	)
-
-done:
-	for {
-		ts := tok.AsString()
-		switch ts {
-		case "int", "long", "char", "short":
-			self.next()
-			if ts == "int" {
-				i += 1
-			} else if ts == "char" {
-				c += 1
-			} else if ts == "short" {
-				s += 1
-			} else if ts == "long" {
-				l += 1
-			}
-			if ty != nil {
-				self.parseError(tok, "invalid type")
-			}
-
-		case "unsigned":
-			self.next()
-			unsigned += 1
-		case "signed":
-			self.next()
-			signed += 1
-			break
-		case "void":
-			self.next()
-			ty = &VoidType{}
-			break done
-		case "float":
-			self.next()
-			ty = &FloatType{}
-			break done
-		case "double":
-			self.next()
-			ty = &DoubleType{}
-			break done
-		case "union", "struct":
-			ty = self.parseRecordType()
-			break done
-
-		default:
-			self.parseError(tok, "unknown type specifier")
-		}
-
-		tok = self.peek(0)
-		if !isTypeSpecifier(tok) {
-			break
-		}
-	}
-
-	var (
+		ty   SymbolType
 		err1 = "%s can not combine with %s type specifier"
 		err2 = "%s is invalid type"
+		err3 = "invalid combination of type specifiers"
+		// Location in every key should be in scan order, so I can find the previous conflicting
+		parts = make(map[string][]lexer.Location)
 	)
-	if ty == nil {
-		ity := &IntegerType{}
+
+	var doCheckError = func(tok lexer.Token) {
+		var (
+			l        = len(parts["long"])
+			i        = len(parts["int"])
+			s        = len(parts["short"])
+			c        = len(parts["char"])
+			unsigned = len(parts["unsigned"])
+			signed   = len(parts["signed"])
+		)
 		if l > 0 {
 			if s > 0 {
 				self.parseError(tok, fmt.Sprintf(err1, "long", "short"))
@@ -219,56 +164,29 @@ done:
 				self.parseError(tok, fmt.Sprintf(err2, "long char"))
 			}
 
-			if l >= 2 {
-				ity.Kind = "long long"
-			} else {
-				ity.Kind = "long"
+			if l > 2 {
+				self.parseError(tok, fmt.Sprintf(err1, "long", "long long"))
 			}
 		} else if i > 0 {
 			if c > 0 {
 				self.parseError(tok, fmt.Sprintf(err1, "char", "int"))
-			} else if s > 0 {
-				ity.Kind = "short"
-			} else {
-				ity.Kind = "int"
+			} else if s > 1 {
+				// report duplicaton
+			} else if i > 1 {
+				self.parseError(tok, fmt.Sprintf(err1, "int", "int"))
 			}
 		} else if s > 0 {
 			if c > 0 {
 				self.parseError(tok, fmt.Sprintf(err1, "char", "short"))
-			} else {
-				ity.Kind = "short"
 			}
-		} else {
-			ity.Kind = "char"
 		}
 
 		if unsigned > 0 {
 			if signed > 0 {
 				self.parseError(tok, fmt.Sprintf(err1, "signed", "unsigned"))
 			}
-			ity.Unsigned = true
-		}
-		ty = ity
-	} else {
-		if i+c+s+l > 0 {
-			//FIXME: better report
-			self.parseError(tok, "cannot combine char/int/short/long with non integral type")
 		}
 	}
-
-	if sym.Type == nil {
-		sym.Type = ty
-	} else {
-		var qty = sym.Type.(*QualifiedType)
-		for qty.Base != nil {
-			qty = qty.Base.(*QualifiedType)
-		}
-		qty.Base = ty
-	}
-}
-
-func (self *Parser) parseTypeDecl(sym *Symbol) {
-	defer self.trace("")()
 
 	for {
 		tok := self.peek(0)
@@ -281,7 +199,31 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 					self.parseError(tok, "multiple storage class specified")
 				}
 			} else if isTypeSpecifier(tok) {
-				self.parseBaseType(sym)
+				ts := tok.AsString()
+				switch ts {
+				case "union", "struct":
+					ty = self.parseRecordType()
+
+				default:
+					self.next()
+					parts[ts] = append(parts[ts], tok.Location)
+					if ty != nil {
+						self.parseError(tok, err3)
+					}
+					switch ts {
+					case "int", "long", "char", "short", "unsigned", "signed":
+						break
+					case "void":
+						ty = &VoidType{}
+					case "float":
+						ty = &FloatType{}
+					case "double":
+						ty = &DoubleType{}
+					default:
+						self.parseError(tok, "unknown type specifier")
+					}
+				}
+				doCheckError(tok)
 
 			} else if isTypeQualifier(tok) {
 				self.next()
@@ -297,6 +239,48 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 		} else {
 			break
 		}
+	}
+
+	if ty == nil {
+		var (
+			l        = len(parts["long"])
+			i        = len(parts["int"])
+			s        = len(parts["short"])
+			unsigned = len(parts["unsigned"])
+		)
+		ity := &IntegerType{}
+		if l > 0 {
+			if l >= 2 {
+				ity.Kind = "long long"
+			} else {
+				ity.Kind = "long"
+			}
+		} else if i > 0 {
+			if s > 0 {
+				ity.Kind = "short"
+			} else {
+				ity.Kind = "int"
+			}
+		} else if s > 0 {
+			ity.Kind = "short"
+		} else {
+			ity.Kind = "char"
+		}
+
+		if unsigned > 0 {
+			ity.Unsigned = true
+		}
+		ty = ity
+	}
+
+	if sym.Type == nil {
+		sym.Type = ty
+	} else {
+		var qty = sym.Type.(*QualifiedType)
+		for qty.Base != nil {
+			qty = qty.Base.(*QualifiedType)
+		}
+		qty.Base = ty
 	}
 
 	util.Printf("parsed type template %v", sym)
