@@ -25,10 +25,11 @@ func (n *Node) Repr() string {
 
 type TranslationUnit struct {
 	Node
-	filename    string
-	funcDecls   []*FunctionDecl
-	varDecls    []*VariableDecl
-	recordDecls []*RecordDecl
+	filename     string
+	funcDecls    []*FunctionDecl
+	varDecls     []*VariableDecl
+	recordDecls  []*RecordDecl
+	typedefDecls []*TypedefDecl
 }
 
 func (tu *TranslationUnit) Repr() string {
@@ -206,6 +207,16 @@ func (self *RecordDecl) Repr() string {
 	return fmt.Sprintf("RecordDecl(%s)", self.Sym)
 }
 
+type TypedefDecl struct {
+	Node
+	Sym string
+	Loc lexer.Location
+}
+
+func (self *TypedefDecl) Repr() string {
+	return fmt.Sprintf("Typedef(%s)", self.Sym)
+}
+
 type VariableDecl struct {
 	Node
 	Sym  string
@@ -330,8 +341,9 @@ type DoStmt struct {
 
 type DeclStmt struct {
 	Node
-	Decls       []*VariableDecl
-	RecordDecls []*RecordDecl
+	Decls        []*VariableDecl
+	RecordDecls  []*RecordDecl
+	TypedefDecls []*TypedefDecl
 }
 
 func (self *DeclStmt) Repr() string {
@@ -407,6 +419,10 @@ func WalkAst(top Ast, wk AstWalker) {
 			}
 
 			for _, d := range tu.recordDecls {
+				visit(d)
+			}
+
+			for _, d := range tu.typedefDecls {
 				visit(d)
 			}
 
@@ -514,6 +530,10 @@ func WalkAst(top Ast, wk AstWalker) {
 			}
 			tryCall(WalkerBubbleUp, ast)
 
+		case *TypedefDecl:
+			tryCall(WalkerPropagate, ast)
+			tryCall(WalkerBubbleUp, ast)
+
 		case *VariableDecl:
 			e := ast.(*VariableDecl)
 			tryCall(WalkerPropagate, ast)
@@ -608,6 +628,15 @@ func WalkAst(top Ast, wk AstWalker) {
 			for _, stmt := range e.Decls {
 				visit(stmt)
 			}
+
+			for _, d := range e.RecordDecls {
+				visit(d)
+			}
+
+			for _, d := range e.TypedefDecls {
+				visit(d)
+			}
+
 			tryCall(WalkerBubbleUp, ast)
 
 		case *ForStmt:

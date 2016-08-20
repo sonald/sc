@@ -22,9 +22,6 @@ func testTemplate(t *testing.T, text string) Ast {
 	return ast
 }
 
-func TestParseScope(t *testing.T) {
-}
-
 func TestParseSimpleDecls(t *testing.T) {
 	var text = `
 static const int *id, *id2;
@@ -108,9 +105,6 @@ const unsigned char volatile (
 			unsigned int (*const)(const char, int, float), char *const*)
 		)[12]
 	)(int (**)[50]);
-
-//typedef int size_t;
-//size_t sz = 2;
 `
 	ast := testTemplate(t, text)
 	if tu, ok := ast.(*TranslationUnit); !ok {
@@ -122,7 +116,57 @@ const unsigned char volatile (
 	}
 }
 
-func TestParseTypes(t *testing.T) {
+func TestParseUserTypes(t *testing.T) {
+	var text = `
+struct Tree {
+	int val;
+};
+
+struct Tree n1;
+
+typedef struct Tree tree_t;
+tree_t n2;
+
+int typedef unsigned iu_t;
+
+typedef int size_t;
+size_t sz = 2;
+
+int unsigned typedef * const *grid_t[2];
+grid_t grid;
+`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if tu.varDecls == nil || len(tu.varDecls) != 4 {
+			t.Errorf("failed to parse some vars")
+		}
+	}
+}
+
+func testParseNamespaces(t *testing.T) {
+	var text = `
+// c has multiple parallel namespaces, the same name may 
+// have another meaning in different namespaces.
+struct Tree {
+	int val;
+};
+
+typedef struct Tree Tree;
+int typedef unsigned compound[2];
+struct compound {
+	int first, second;
+} compound;
+
+`
+	ast := testTemplate(t, text)
+	if _, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	}
+}
+
+func testParseTypeCasts(t *testing.T) {
 	var text = `
 (int (*fp)[5])a;
 (int * id[3])a;
@@ -329,6 +373,7 @@ int foo(int a, int b)
 	// this is only syntactically legal
     int a = {1,{2,3}};
     int b[] = {1,2,3,};
+
     ++a * 20 / 21 - 30 + 40 % 17;
     a--+-b++;
     kernel[2] + a;

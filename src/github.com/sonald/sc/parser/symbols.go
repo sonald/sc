@@ -258,13 +258,12 @@ func NextAnonyEnumName() string {
 
 // typedef
 type UserType struct {
-	Ref SymbolType
-	Loc lexer.Location
+	Name string
+	Ref  SymbolType
 }
 
 func (s *UserType) String() string {
-	panic("not implemented")
-	return "UserType"
+	return fmt.Sprintf("%s := %v", s.Name, s.Ref)
 }
 
 // we actually have two kinds of symbols
@@ -319,32 +318,31 @@ func (scope *SymbolScope) LookupSymbol(name string, customed bool) *Symbol {
 	return nil
 }
 
+//FIXME: record and typedef are two distinct name spaces
 func (scope *SymbolScope) RegisterUserType(st SymbolType) {
+	var name string
 	switch st.(type) {
 	case *RecordType:
 		rt := st.(*RecordType)
-		if prev := scope.LookupUserType(rt.Name); prev != nil {
-			var s = [2]string{"type redeclartion, previous is at ", ""}
+		name = rt.Name
 
-			switch prev.(type) {
-			case *RecordType:
-				//FIXME: need to find corresponding RecordDecl
-				// s[1] = fmt.Sprint(prev.(*RecordType).Loc)
-			case *EnumType:
-			case *UserType:
-				break
-			}
-			panic(fmt.Sprintf(s[0], s[1]))
-
-		}
-
-		scope.types = append(scope.types, st)
 	case *EnumType:
 	case *UserType:
+		ut := st.(*UserType)
+		name = ut.Name
 		break
+	}
+
+	if prev := scope.LookupUserType(name); prev != nil {
+		var s = [2]string{"type redeclartion, previous is at ", ""}
+		panic(fmt.Sprintf(s[0], s[1]))
+
+	} else {
+		scope.types = append(scope.types, st)
 	}
 }
 
+//FIXME: record and typedef are two distinct name spaces
 func (scope *SymbolScope) LookupUserType(name string) SymbolType {
 	for _, st := range scope.types {
 		switch st.(type) {
@@ -354,8 +352,12 @@ func (scope *SymbolScope) LookupUserType(name string) SymbolType {
 				return rt
 			}
 		case *EnumType:
-		case *UserType:
 			break
+		case *UserType:
+			ut := st.(*UserType)
+			if ut.Name == name {
+				return ut
+			}
 
 		default:
 			panic("invalid type for usertype")

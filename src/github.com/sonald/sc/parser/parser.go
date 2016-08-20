@@ -137,7 +137,7 @@ func (self *Parser) parseError(tok lexer.Token, msg string) {
 		tok.Line, tok.Column, msg))
 }
 
-func (self *Parser) parseTypeDecl(sym *Symbol) {
+func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
 	defer self.trace("")()
 	var (
 		ty   SymbolType
@@ -195,6 +195,10 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 				self.next()
 				if sym.Storage == NilStorage {
 					sym.Storage = storages[tok.AsString()]
+					if sym.Storage == Typedef {
+						isTypedef = true
+						util.Printf(util.Parser, util.Critical, "this is a typedefing")
+					}
 				} else {
 					self.parseError(tok, "multiple storage class specified")
 				}
@@ -235,7 +239,17 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 			} else {
 				self.parseError(tok, "invalid declaration specifier")
 			}
-			//FIXME: handle usertype by typedef
+		} else if tok.Kind == lexer.IDENTIFIER {
+			//TODO: check if typedef name
+			util.Printf("looking up user type %s", tok.AsString())
+			if uty := self.LookupUserType(tok.AsString()); uty != nil {
+				util.Printf("found usertype %s", tok.AsString())
+				ty = uty
+				self.next()
+			} else {
+				break
+			}
+
 		} else {
 			break
 		}
@@ -284,6 +298,7 @@ func (self *Parser) parseTypeDecl(sym *Symbol) {
 	}
 
 	util.Printf("parsed type template %v", sym)
+	return
 }
 
 func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
@@ -295,7 +310,9 @@ func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
 		}
 
 		var tmpl = &Symbol{}
-		self.parseTypeDecl(tmpl)
+		if isTypedef := self.parseTypeDecl(tmpl); isTypedef {
+			self.parseError(self.peek(0), "typedef is not allowed in function param")
+		}
 		if arg := self.parseDeclarator(tmpl); arg == nil {
 			break
 		} else {
@@ -327,7 +344,9 @@ func (self *Parser) parseFunctionParamTypes(ty *Function) {
 		}
 
 		var tmpl = &Symbol{}
-		self.parseTypeDecl(tmpl)
+		if isTypedef := self.parseTypeDecl(tmpl); isTypedef {
+			self.parseError(self.peek(0), "typedef is not allowed in function param")
+		}
 		if arg := self.parseDeclarator(tmpl); arg == nil {
 			break
 		} else {
@@ -361,6 +380,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		idLevel               = 0
 		finalSym              = Symbol{Storage: tmpl.Storage}
 		nested                = 0 // nested level
+		isTypedef             = tmpl.Storage == Typedef
 	)
 
 	//FIXME: support const-expr
@@ -436,7 +456,11 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			id = &tok
 			idLevel = nested
 			finalSym.Name = *id
-			self.AddSymbol(&finalSym)
+			if isTypedef {
+				self.AddTypeSymbol(&finalSym)
+			} else {
+				self.AddSymbol(&finalSym)
+			}
 		}
 
 		switch self.peek(0).Kind {
@@ -457,7 +481,11 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			}
 
 			if nested == 1 && id != nil {
-				decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+				if isTypedef {
+					decl = &TypedefDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+				} else {
+					decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+				}
 			}
 
 		case lexer.LPAREN: // func
@@ -481,7 +509,11 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			} else {
 				// this is just a temp scope to capture params
 				if nested == 1 && id != nil {
-					decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+					if isTypedef {
+						decl = &TypedefDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+					} else {
+						decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+					}
 				}
 				self.PushScope()
 				self.parseFunctionParamTypes(pt.ty.(*Function))
@@ -499,7 +531,11 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 
 		default:
 			if id != nil {
-				decl = &VariableDecl{Node: Node{self.ctx}, Sym: finalSym.Name.AsString()}
+				if isTypedef {
+					decl = &TypedefDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+				} else {
+					decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+				}
 			}
 		}
 
@@ -511,7 +547,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			case *VariableDecl:
 				decl.(*VariableDecl).init = self.parseInitializerList()
 			default:
-				self.parseError(self.peek(0), "Initializer is not allowed here")
+				self.parseError(self.peek(0), "Initializer is not allowed here (only variables can be initialized)")
 			}
 		}
 
@@ -533,8 +569,13 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		decl = &VariableDecl{Node: Node{self.ctx}, Sym: finalSym.Name.AsString()}
 		self.AddSymbol(&finalSym)
 	}
-	util.Printf(util.Parser, util.Warning, "level 0: -> %v\n", pt.ty)
-	util.Printf(util.Parser, util.Warning, "parsed %v, sym %v", decl, finalSym)
+
+	if isTypedef {
+		finalSym.Type = &UserType{id.AsString(), finalSym.Type}
+		self.AddUserType(finalSym.Type)
+	}
+
+	util.Printf(util.Parser, util.Warning, "parsed %v %v", finalSym.Name.AsString(), finalSym.Type)
 	return decl
 }
 
@@ -760,6 +801,9 @@ func (self *Parser) parseExternalDecl() Ast {
 			break
 		} else {
 			switch decl.(type) {
+			case *TypedefDecl:
+				self.tu.typedefDecls = append(self.tu.typedefDecls, decl.(*TypedefDecl))
+				util.Printf("parsed %v", decl.Repr())
 			case *VariableDecl:
 				self.tu.varDecls = append(self.tu.varDecls, decl.(*VariableDecl))
 				util.Printf("parsed %v", decl.Repr())
@@ -1142,8 +1186,14 @@ func (self *Parser) parseDeclStatement() *DeclStmt {
 			break
 		} else {
 			switch decl.(type) {
+			case *TypedefDecl:
+				declStmt.TypedefDecls = append(declStmt.TypedefDecls, decl.(*TypedefDecl))
+				util.Printf("parsed %v", decl.Repr())
 			case *VariableDecl:
 				declStmt.Decls = append(declStmt.Decls, decl.(*VariableDecl))
+				util.Printf("parsed %v", decl.Repr())
+			case *RecordDecl:
+				declStmt.RecordDecls = append(declStmt.RecordDecls, decl.(*RecordDecl))
 				util.Printf("parsed %v", decl.Repr())
 
 			default:
@@ -1643,6 +1693,7 @@ func (self *Parser) DumpAst() {
 		WalkFieldDecl            func(ws WalkStage, e *FieldDecl)
 		WalkRecordDecl           func(ws WalkStage, e *RecordDecl)
 		WalkVariableDecl         func(ws WalkStage, e *VariableDecl)
+		WalkTypedefDecl          func(ws WalkStage, e *TypedefDecl)
 		WalkParamDecl            func(ws WalkStage, e *ParamDecl)
 		WalkFunctionDecl         func(ws WalkStage, e *FunctionDecl)
 		WalkExprStmt             func(ws WalkStage, e *ExprStmt)
@@ -1827,6 +1878,16 @@ func (self *Parser) DumpAst() {
 		} else {
 			stack--
 			scope = Pop()
+		}
+	}
+	walker.WalkTypedefDecl = func(ws WalkStage, e *TypedefDecl) {
+		if ws == WalkerPropagate {
+			sym := scope.LookupSymbol(e.Sym, true)
+
+			log(fmt.Sprintf("TypedefDecl(%s)", sym))
+			stack++
+		} else {
+			stack--
 		}
 	}
 	walker.WalkVariableDecl = func(ws WalkStage, e *VariableDecl) {

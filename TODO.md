@@ -9,13 +9,14 @@
 ### parsing
 + [x] struct/union
 + [x] type class system
-+ [ ] parsing more type-names
++ [x] parsing more type-names
++ [ ] parse initializer designator 
 + [ ] support enum
 + [ ] make all errors type of Error, instead of string
 + [ ] parsing typedef's
 + [ ] parsing sizeof
 + [x] namespaces (implicitly supported by scopes)
-+ [ ] preprocossor
++ [ ] preprocossor (#includes)
 + [ ] parsing type cast
 
 ### semantic stage
