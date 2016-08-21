@@ -411,11 +411,60 @@ int foo(int a, int b)
     (float)a + 2.0;
     (float)kernel[2] / 2; 
 	int c = b[3] + a[2];
+
+	sizeof c;
+	a/sizeof c+2;
+	int sz = sizeof (struct grid {int val;});
 }
 	`
-	testTemplate(t, text)
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if len(tu.funcDecls) != 1 {
+			t.Errorf("failed to parse func decl")
+		}
+
+		fd := tu.funcDecls[0]
+		if len(fd.Args) != 2 {
+			t.Errorf("# of arguments = %d, expect 2", len(fd.Args))
+		}
+
+		if len(fd.Body.Stmts) != 20 {
+			t.Errorf("# of statements = %d, expect 20", len(fd.Body.Stmts))
+		}
+
+	}
 }
 
+func TestParseComplexExprs(t *testing.T) {
+	var text = `
+int foo()
+{
+	struct Tree {
+		int val;
+		struct Tree* left, *right;
+	};
+
+	struct Tree t = (struct Tree) {10, NULL, NULL};
+}
+	`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		if len(tu.funcDecls) != 1 {
+			t.Errorf("failed to parse func decl")
+		}
+
+		fd := tu.funcDecls[0]
+
+		if len(fd.Body.Stmts) != 2 {
+			t.Errorf("# of statements = %d, expect 2", len(fd.Body.Stmts))
+		}
+
+	}
+}
 func TestParseIllegalExpr(t *testing.T) {
 	var text = `
 int foo(int a, int b)

@@ -100,17 +100,24 @@ type UnaryOperation struct {
 	Node
 	Op      lexer.Kind
 	Postfix bool // false if prefix, true postfix. eg ++, --
-	expr    Expression
+	Expr    Expression
 }
 
 func (self *UnaryOperation) Repr() string {
 	ty := reflect.TypeOf(self).Elem()
 	ts := lexer.TokKinds[self.Op]
 	if self.Postfix {
-		return fmt.Sprintf("%s(Postfix(%s) %s)", ty.Name(), self.expr, ts)
+		return fmt.Sprintf("%s(Postfix(%s) %s)", ty.Name(), self.Expr, ts)
 	} else {
-		return fmt.Sprintf("%s(%s %s)", ty.Name(), ts, self.expr)
+		return fmt.Sprintf("%s(%s %s)", ty.Name(), ts, self.Expr)
 	}
+}
+
+type SizeofExpr struct {
+	Node
+	// type is either from source code or evaluated from Expr
+	Type SymbolType
+	Expr Expression
 }
 
 type ConditionalOperation struct {
@@ -487,7 +494,15 @@ func WalkAst(top Ast, wk AstWalker) {
 		case *UnaryOperation:
 			var e = ast.(*UnaryOperation)
 			tryCall(WalkerPropagate, ast)
-			visit(e.expr)
+			visit(e.Expr)
+			tryCall(WalkerBubbleUp, ast)
+
+		case *SizeofExpr:
+			var e = ast.(*SizeofExpr)
+			tryCall(WalkerPropagate, ast)
+			if e.Expr != nil {
+				visit(e.Expr)
+			}
 			tryCall(WalkerBubbleUp, ast)
 
 		case *ConditionalOperation:

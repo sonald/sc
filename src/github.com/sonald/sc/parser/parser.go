@@ -1021,20 +1021,16 @@ func (self *Parser) parseStatement() Statement {
 			stmt = self.parseBreakStatement()
 		case "return":
 			stmt = self.parseReturnStatement()
-		case "sizeof":
-			// sizeof expr
-			stmt = self.parseExprStatement()
 
 		default:
 			if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
 				stmt = self.parseDeclStatement()
-			} else {
-
-				self.parseError(tok, "unknown keyword")
 			}
 		}
 
-	default:
+	}
+
+	if stmt == nil {
 		if tok.Kind == lexer.LBRACE {
 			stmt = self.parseCompoundStmt()
 		} else if tok.Kind == lexer.IDENTIFIER && self.peek(1).Kind == lexer.COLON {
@@ -1434,6 +1430,33 @@ func condop_led(p *Parser, lhs Expression, op *operation) Expression {
 	return expr
 }
 
+// for unary sizeof
+func sizeof_nud(p *Parser, op *operation) Expression {
+	defer p.trace("")()
+	if tok := p.next(); tok.AsString() != "sizeof" {
+		p.parseError(tok, "invalid keyword in expression, maybe sizeof ?")
+	}
+
+	e := &SizeofExpr{Node: Node{p.ctx}}
+
+	if tok := p.peek(0); tok.Kind == lexer.LPAREN {
+		follow := p.peek(1)
+		if isStorageClass(follow) || isTypeQualifier(follow) || isTypeSpecifier(follow) {
+			p.match(lexer.LPAREN)
+			e.Type = p.parseTypeExpression()
+			if e.Type == nil {
+				p.parseError(p.peek(0), "invalid type name")
+			}
+			p.match(lexer.RPAREN)
+		} else {
+			e.Expr = p.parseExpression(op.NudPred)
+		}
+	} else {
+		e.Expr = p.parseExpression(op.NudPred)
+	}
+	return e
+}
+
 // for unary (including prefix)
 func unaryop_nud(p *Parser, op *operation) Expression {
 	defer p.trace("")()
@@ -1503,44 +1526,30 @@ func lparen_led(p *Parser, lhs Expression, op *operation) Expression {
 	return expr
 }
 
-/*
-NOTE: this is messy, right now, only simple types supported
-type-name:
+func (self *Parser) parseTypeExpression() SymbolType {
+	var tmpl = &Symbol{}
+	self.parseTypeDecl(tmpl)
+	if decl := self.parseDeclarator(tmpl); decl != nil {
+		if vd, ok := decl.(*VariableDecl); ok {
+			sym := self.LookupSymbol(vd.Sym)
+			return sym.Type
+		}
+	}
 
-specifier-qualifier-list abstract-declarator?
+	return nil
+}
 
-abstract-declarator: pointer
-
-	pointer? direct-abstract-declarator
-
-direct-abstract-declarator: ( abstract-declarator )
-
-direct-abstract-declarator? [ type-qualifier-listopt assignment-expressionopt ]
-
-direct-abstract-declarator? [ static type-qualifier-listopt assignment-expression ]
-
-direct-abstract-declarator? [ type-qualifier-list static assignment-expression ]
-
-direct-abstract-declarator? [ * ]
-
-direct-abstract-declarator?  ( parameter-type-listopt )
-*/
 func (self *Parser) tryParseTypeExpression() SymbolType {
 	defer self.trace("")()
 	var ty SymbolType
 	tok := self.peek(0)
-	if tok.Kind == lexer.KEYWORD {
-		if isTypeSpecifier(tok) {
-			switch tok.AsString() {
-			case "int":
-				self.next()
-				ty = &IntegerType{}
-			case "float":
-				self.next()
-				ty = &FloatType{}
-			}
+	if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
+		ty = self.parseTypeExpression()
+		if ty == nil {
+			self.parseError(tok, "invalid type name for casting")
 		}
 	}
+
 	return ty
 }
 
@@ -1805,6 +1814,7 @@ func (self *Parser) DumpAst() {
 		WalkBinaryOperation      func(ws WalkStage, e *BinaryOperation)
 		WalkDeclRefExpr          func(ws WalkStage, e *DeclRefExpr)
 		WalkUnaryOperation       func(ws WalkStage, e *UnaryOperation)
+		WalkSizeofExpr           func(ws WalkStage, e *SizeofExpr)
 		WalkConditionalOperation func(ws WalkStage, e *ConditionalOperation)
 		WalkArraySubscriptExpr   func(ws WalkStage, e *ArraySubscriptExpr)
 		WalkMemberExpr           func(ws WalkStage, e *MemberExpr)
@@ -1888,6 +1898,18 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
+	walker.WalkSizeofExpr = func(ws WalkStage, e *SizeofExpr) {
+		if ws == WalkerPropagate {
+			if e.Type == nil {
+				log("SizeofExpr")
+			} else {
+				log(fmt.Sprintf("SizeofExpr(%v)", e.Type))
+			}
+			stack++
+		} else {
+			stack--
+		}
+	}
 	walker.WalkUnaryOperation = func(ws WalkStage, e *UnaryOperation) {
 		if ws == WalkerPropagate {
 			var ty = reflect.TypeOf(e).Elem()
@@ -2293,6 +2315,9 @@ func init() {
 	// prefix and postfix
 	operations[lexer.INC] = &operation{lexer.Token{}, LeftAssoc, 140, 160, unaryop_nud, unaryop_led}
 	operations[lexer.DEC] = &operation{lexer.Token{}, LeftAssoc, 140, 160, unaryop_nud, unaryop_led}
+
+	// for sizeof unary op
+	operations[lexer.KEYWORD] = &operation{lexer.Token{}, LeftAssoc, 140, -1, sizeof_nud, error_led}
 
 	operations[lexer.OPEN_BRACKET] = &operation{lexer.Token{}, LeftAssoc, -1, 160, error_nud, array_led}
 	operations[lexer.CLOSE_BRACKET] = &operation{lexer.Token{}, LeftAssoc, -1, -1, error_nud, expr_led}
