@@ -2297,7 +2297,7 @@ func init() {
 
 	operations[lexer.OR] = &operation{lexer.Token{}, LeftAssoc, -1, 60, error_nud, binop_led}
 	operations[lexer.XOR] = &operation{lexer.Token{}, LeftAssoc, -1, 70, error_nud, binop_led}
-	operations[lexer.AND] = &operation{lexer.Token{}, LeftAssoc, 150, 80, error_nud, binop_led}
+	operations[lexer.AND] = &operation{lexer.Token{}, LeftAssoc, 140, 80, unaryop_nud, binop_led}
 
 	operations[lexer.EQUAL] = &operation{lexer.Token{}, LeftAssoc, -1, 90, error_nud, binop_led}
 	operations[lexer.NE] = &operation{lexer.Token{}, LeftAssoc, -1, 90, error_nud, binop_led}
