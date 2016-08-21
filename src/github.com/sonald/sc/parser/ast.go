@@ -29,6 +29,7 @@ type TranslationUnit struct {
 	funcDecls    []*FunctionDecl
 	varDecls     []*VariableDecl
 	recordDecls  []*RecordDecl
+	enumDecls    []*EnumDecl
 	typedefDecls []*TypedefDecl
 }
 
@@ -207,6 +208,30 @@ func (self *RecordDecl) Repr() string {
 	return fmt.Sprintf("RecordDecl(%s)", self.Sym)
 }
 
+type EnumeratorDecl struct {
+	Node
+	Sym   string     // Name of Enumerator's Symbol
+	Value Expression // need to be a constant-expr
+	Loc   lexer.Location
+}
+
+func (self *EnumeratorDecl) Repr() string {
+	return fmt.Sprintf("EnumeratorDecl(%s)", self.Sym)
+}
+
+type EnumDecl struct {
+	Node
+	Sym          string
+	List         []*EnumeratorDecl
+	Loc          lexer.Location
+	IsDefinition bool
+	Prev         Ast // previous forward declaration of the enum
+}
+
+func (self *EnumDecl) Repr() string {
+	return fmt.Sprintf("EnumDecl(%s)", self.Sym)
+}
+
 type TypedefDecl struct {
 	Node
 	Sym string
@@ -343,6 +368,7 @@ type DeclStmt struct {
 	Node
 	Decls        []*VariableDecl
 	RecordDecls  []*RecordDecl
+	EnumDecls    []*EnumDecl
 	TypedefDecls []*TypedefDecl
 }
 
@@ -419,6 +445,10 @@ func WalkAst(top Ast, wk AstWalker) {
 			}
 
 			for _, d := range tu.recordDecls {
+				visit(d)
+			}
+
+			for _, d := range tu.enumDecls {
 				visit(d)
 			}
 
@@ -530,6 +560,22 @@ func WalkAst(top Ast, wk AstWalker) {
 			}
 			tryCall(WalkerBubbleUp, ast)
 
+		case *EnumeratorDecl:
+			e := ast.(*EnumeratorDecl)
+			tryCall(WalkerPropagate, ast)
+			if e.Value != nil {
+				visit(e.Value)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
+		case *EnumDecl:
+			e := ast.(*EnumDecl)
+			tryCall(WalkerPropagate, ast)
+			for _, f := range e.List {
+				visit(f)
+			}
+			tryCall(WalkerBubbleUp, ast)
+
 		case *TypedefDecl:
 			tryCall(WalkerPropagate, ast)
 			tryCall(WalkerBubbleUp, ast)
@@ -630,6 +676,10 @@ func WalkAst(top Ast, wk AstWalker) {
 			}
 
 			for _, d := range e.RecordDecls {
+				visit(d)
+			}
+
+			for _, d := range e.EnumDecls {
 				visit(d)
 			}
 

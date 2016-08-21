@@ -207,6 +207,8 @@ func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
 				switch ts {
 				case "union", "struct":
 					ty = self.parseRecordType()
+				case "enum":
+					ty = self.parseEnumType()
 
 				default:
 					self.next()
@@ -579,6 +581,127 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 	return decl
 }
 
+func (self *Parser) parseEnumType() SymbolType {
+	defer self.trace("")()
+	var (
+		enumDecl  = &EnumDecl{Node: Node{self.ctx}}
+		ret       = &EnumType{}
+		enumSym   = &Symbol{}
+		tok       lexer.Token
+		isForward bool
+	)
+
+	self.next() // eat enum
+
+	if tok = self.peek(0); tok.Kind == lexer.IDENTIFIER {
+		self.next()
+		ret.Name = tok.AsString()
+		enumSym.Name = tok
+		if ty := self.LookupUserType(ret.Name); ty != nil {
+			var decls []*EnumDecl
+			switch self.effectiveParent.(type) {
+			case *DeclStmt:
+				decls = self.effectiveParent.(*DeclStmt).EnumDecls
+			case *TranslationUnit:
+				decls = self.tu.enumDecls
+			default:
+				return ty
+			}
+
+			if next := self.peek(0).Kind; next != lexer.SEMICOLON && next != lexer.LBRACE {
+				return ty
+			}
+			for _, decl := range decls {
+				if decl.Sym == ret.Name && !decl.IsDefinition {
+					enumSym = self.LookupTypeSymbol(ret.Name)
+					ret = ty.(*EnumType)
+					isForward = true
+					enumDecl.Prev = decl
+					break
+				}
+			}
+
+			if !isForward {
+				return ty
+			}
+		}
+	} else {
+		ret.Name = NextAnonyEnumName()
+	}
+
+	enumSym.Type = ret
+	enumDecl.Sym = ret.Name
+	defer func() {
+		if p := recover(); p == nil {
+			if ds, ok := self.effectiveParent.(*DeclStmt); ok {
+				ds.EnumDecls = append(ds.EnumDecls, enumDecl)
+			} else {
+				self.tu.enumDecls = append(self.tu.enumDecls, enumDecl)
+			}
+		} else {
+			panic(p) //propagate
+		}
+	}()
+
+	if !isForward {
+		self.AddUserType(ret)
+		self.AddTypeSymbol(enumSym)
+	}
+
+	if self.peek(0).Kind == lexer.SEMICOLON {
+		//forward declaration
+		return ret
+	}
+
+	self.match(lexer.LBRACE)
+	enumDecl.IsDefinition = true
+
+	for {
+		if self.peek(0).Kind == lexer.RBRACE {
+			break
+		}
+
+		var (
+			e  = &EnumeratorDecl{Node: enumDecl.Node}
+			es = &Symbol{}
+			et = &EnumeratorType{}
+		)
+		tok = self.next()
+		if tok.Kind != lexer.IDENTIFIER {
+			self.parseError(tok, "need a valid enumerator constant")
+		}
+
+		et.Name = tok.AsString()
+		es.Type = et
+		es.Name = tok
+		//FIXME: do check if redeclaration happens
+		self.AddUserType(et)
+		self.AddTypeSymbol(es)
+
+		e.Sym = et.Name
+		e.Loc = tok.Location
+
+		if self.peek(0).Kind == lexer.ASSIGN {
+			self.next()
+			oldpred := operations[lexer.COMMA].LedPred
+			operations[lexer.COMMA].LedPred = -1
+			e.Value = self.parseExpression(0)
+			operations[lexer.COMMA].LedPred = oldpred
+		}
+
+		enumDecl.List = append(enumDecl.List, e)
+		if self.peek(0).Kind == lexer.COMMA {
+			self.next()
+		}
+	}
+
+	self.match(lexer.RBRACE)
+
+	util.Printf("parsed EnumType: %v", ret)
+
+	return ret
+}
+
 func (self *Parser) parseRecordType() SymbolType {
 	defer self.trace("")()
 	var (
@@ -643,7 +766,7 @@ func (self *Parser) parseRecordType() SymbolType {
 			// if this is top level of record decl, skip it and continue
 			if _, ok := self.currentScope.Owner.(*RecordDecl); !ok {
 				util.Printf(util.Parser, util.Warning, p)
-				for tok := self.next(); tok.Kind != lexer.RBRACE; tok = self.next() {
+				for tok := self.next(); tok.Kind != lexer.EOT && tok.Kind != lexer.RBRACE; tok = self.next() {
 				}
 				self.mayIgnore(lexer.SEMICOLON)
 			}
@@ -1692,6 +1815,8 @@ func (self *Parser) DumpAst() {
 		WalkInitListExpr         func(ws WalkStage, e *InitListExpr)
 		WalkFieldDecl            func(ws WalkStage, e *FieldDecl)
 		WalkRecordDecl           func(ws WalkStage, e *RecordDecl)
+		WalkEnumeratorDecl       func(ws WalkStage, e *EnumeratorDecl)
+		WalkEnumDecl             func(ws WalkStage, e *EnumDecl)
 		WalkVariableDecl         func(ws WalkStage, e *VariableDecl)
 		WalkTypedefDecl          func(ws WalkStage, e *TypedefDecl)
 		WalkParamDecl            func(ws WalkStage, e *ParamDecl)
@@ -1732,7 +1857,7 @@ func (self *Parser) DumpAst() {
 
 	walker.WalkIntLiteralExpr = func(ws WalkStage, e *IntLiteralExpr) {
 		if ws == WalkerPropagate {
-			log(reflect.TypeOf(e).Elem().Name())
+			log(e.Repr())
 		}
 	}
 
@@ -1878,6 +2003,23 @@ func (self *Parser) DumpAst() {
 		} else {
 			stack--
 			scope = Pop()
+		}
+	}
+	walker.WalkEnumeratorDecl = func(ws WalkStage, e *EnumeratorDecl) {
+		if ws == WalkerPropagate {
+			log(fmt.Sprintf("Enumerator(%s)", e.Sym))
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkEnumDecl = func(ws WalkStage, e *EnumDecl) {
+		if ws == WalkerPropagate {
+			log(fmt.Sprintf("EnumDecl(%s prev %p)", e.Sym, e.Prev))
+			stack++
+
+		} else {
+			stack--
 		}
 	}
 	walker.WalkTypedefDecl = func(ws WalkStage, e *TypedefDecl) {

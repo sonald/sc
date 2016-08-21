@@ -35,10 +35,9 @@ int signed c;
 void* fp;
 short int si;
 
-// errors, but better report warnings and proceed
+// these are errors, but better report warnings and proceed
 int int int iii;
 long long long lll;
-
 short long sl;
 char long cl;
 short int long il;
@@ -81,7 +80,7 @@ static const int add(const int *a, const int b);
 			t.Errorf("failed to parse some records")
 		}
 
-		if tu.varDecls == nil || len(tu.varDecls) != 16 {
+		if tu.varDecls == nil || len(tu.varDecls) != 15 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -122,6 +121,7 @@ struct Tree {
 	int val;
 };
 
+struct Tree;
 struct Tree n1;
 
 typedef struct Tree tree_t;
@@ -134,12 +134,30 @@ size_t sz = 2;
 
 int unsigned typedef * const *grid_t[2];
 grid_t grid;
+
+int typedef (*designator)(int ,int); 
+
+int typedef unsigned * *const ui_t[2], (*ui_t2)(void);
+
+enum Color;
+enum Color clr;
+enum Color {red, green = 3, blue};
+
+typedef enum Color color_t;
+enum Color clr2 = green;
+color_t clr3 = red;
 `
 	ast := testTemplate(t, text)
 	if tu, ok := ast.(*TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.varDecls == nil || len(tu.varDecls) != 4 {
+		if tu.typedefDecls == nil || len(tu.typedefDecls) != 8 {
+			t.Errorf("failed to parse some typedefs")
+		}
+		if tu.varDecls == nil || len(tu.varDecls) != 7 {
+			t.Errorf("failed to parse some vars")
+		}
+		if tu.enumDecls == nil || len(tu.enumDecls) != 2 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -159,6 +177,9 @@ struct compound {
 	int first, second;
 } compound;
 
+//enum Color {red, green, blue};
+//struct red {
+//};
 `
 	ast := testTemplate(t, text)
 	if _, ok := ast.(*TranslationUnit); !ok {

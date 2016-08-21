@@ -243,12 +243,21 @@ func NextAnonyRecordName() string {
 
 var anonymousEnumSeq = 0
 
+type EnumeratorType struct {
+	Name string
+}
+
+func (e *EnumeratorType) String() string {
+	return fmt.Sprintf("%v", e.Name)
+}
+
 type EnumType struct {
-	Loc lexer.Location
+	Name string
+	List []*EnumeratorType
 }
 
 func (e *EnumType) String() string {
-	return ""
+	return fmt.Sprintf("enum %s", e.Name)
 }
 
 func NextAnonyEnumName() string {
@@ -327,10 +336,16 @@ func (scope *SymbolScope) RegisterUserType(st SymbolType) {
 		name = rt.Name
 
 	case *EnumType:
+		et := st.(*EnumType)
+		name = et.Name
+
+	case *EnumeratorType:
+		et := st.(*EnumeratorType)
+		name = et.Name
+
 	case *UserType:
 		ut := st.(*UserType)
 		name = ut.Name
-		break
 	}
 
 	if prev := scope.LookupUserType(name); prev != nil {
@@ -351,8 +366,16 @@ func (scope *SymbolScope) LookupUserType(name string) SymbolType {
 			if rt.Name == name {
 				return rt
 			}
+		case *EnumeratorType:
+			et := st.(*EnumeratorType)
+			if et.Name == name {
+				return et
+			}
 		case *EnumType:
-			break
+			et := st.(*EnumType)
+			if et.Name == name {
+				return et
+			}
 		case *UserType:
 			ut := st.(*UserType)
 			if ut.Name == name {
