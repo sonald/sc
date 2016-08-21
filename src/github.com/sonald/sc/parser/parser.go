@@ -2214,7 +2214,7 @@ func init() {
 	storages = make(map[string]Storage)
 	storages["auto"] = Auto
 	storages["static"] = Static
-	storages["external"] = External
+	storages["extern"] = External
 	storages["register"] = Register
 	storages["typedef"] = Typedef
 

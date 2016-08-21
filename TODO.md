@@ -11,9 +11,9 @@
 + [x] type class system
 + [x] parsing more type-names
 + [ ] parse initializer designator 
-+ [ ] support enum
++ [x] support enum
 + [ ] make all errors type of Error, instead of string
-+ [ ] parsing typedef's
++ [x] parsing typedef's
 + [ ] parsing sizeof
 + [x] namespaces (implicitly supported by scopes)
 + [ ] preprocossor (#includes)

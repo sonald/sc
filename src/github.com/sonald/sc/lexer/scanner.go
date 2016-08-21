@@ -666,7 +666,7 @@ func (self *Scanner) Next() Token {
 func init() {
 	kws := []string{
 		"auto", "break", "case", "char", "const", "continue", "default", "do", "double",
-		"else", "enum", "exetrn", "float", "for", "goto", "if", "inline", "int", "long",
+		"else", "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long",
 		"register", "restrict", "return", "short", "signed", "sizeof", "static", "struct",
 		"switch", "typedef", "union", "unsigned", "void", "volatile", "while",
 	}
