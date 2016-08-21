@@ -279,10 +279,11 @@ func (self *ParamDecl) Repr() string {
 
 type FunctionDecl struct {
 	Node
-	Name  string
-	Args  []*ParamDecl
-	Body  *CompoundStmt
-	Scope *SymbolScope
+	Name       string
+	Args       []*ParamDecl
+	IsVariadic bool
+	Body       *CompoundStmt
+	Scope      *SymbolScope
 }
 
 func (self *FunctionDecl) Repr() string {
@@ -300,6 +301,9 @@ func (self *FunctionDecl) Repr() string {
 		if i < len(self.Args)-1 {
 			s += ", "
 		}
+	}
+	if self.IsVariadic {
+		s += ",..."
 	}
 	s += "))"
 

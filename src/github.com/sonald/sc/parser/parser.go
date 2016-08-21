@@ -311,6 +311,16 @@ func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
 			break
 		}
 
+		if self.peek(0).Kind == lexer.ELLIPSIS {
+			if self.peek(1).Kind != lexer.RPAREN {
+				self.parseError(self.peek(0), "ellipsis should be the last arg of varidic function")
+			}
+			self.next()
+			decl.IsVariadic = true
+			ty.IsVariadic = true
+			continue
+		}
+
 		var tmpl = &Symbol{}
 		if isTypedef := self.parseTypeDecl(tmpl); isTypedef {
 			self.parseError(self.peek(0), "typedef is not allowed in function param")
@@ -343,6 +353,15 @@ func (self *Parser) parseFunctionParamTypes(ty *Function) {
 	for {
 		if self.peek(0).Kind == lexer.RPAREN {
 			break
+		}
+
+		if self.peek(0).Kind == lexer.ELLIPSIS {
+			if self.peek(1).Kind != lexer.RPAREN {
+				self.parseError(self.peek(0), "ellipsis should be the last arg of varidic function")
+			}
+			self.next()
+			ty.IsVariadic = true
+			continue
 		}
 
 		var tmpl = &Symbol{}

@@ -139,8 +139,9 @@ func (p *Pointer) String() string {
 }
 
 type Function struct {
-	Return SymbolType
-	Args   []SymbolType
+	Return     SymbolType
+	Args       []SymbolType
+	IsVariadic bool
 }
 
 func (f *Function) String() string {
@@ -151,6 +152,9 @@ func (f *Function) String() string {
 		if i < len(f.Args)-1 {
 			s += ", "
 		}
+	}
+	if f.IsVariadic {
+		s += ",..."
 	}
 	s += ")"
 

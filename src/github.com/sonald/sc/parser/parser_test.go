@@ -69,12 +69,14 @@ struct Tree {
 static const int add(const int *a, const int b);
 
 extern int logE(void);
+
+void signal(int signo, ...);
 `
 	ast := testTemplate(t, text)
 	if tu, ok := ast.(*TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.funcDecls == nil || len(tu.funcDecls) != 2 {
+		if tu.funcDecls == nil || len(tu.funcDecls) != 3 {
 			t.Errorf("failed to parse func decl")
 		}
 
