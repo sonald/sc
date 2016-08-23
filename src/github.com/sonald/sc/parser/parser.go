@@ -407,22 +407,23 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 	//FIXME: support const-expr
 	var parseArray = func() Partial {
 		defer self.trace("")()
-		var partial = Partial{}
-		var aty = &Array{}
+		var (
+			partial = Partial{}
+			aty     = &Array{}
+		)
+
 		partial.ty = aty
 		partial.hole = &aty.ElemType
 
 		for {
 			self.match(lexer.OPEN_BRACKET)
+			aty.Level++
 			if tok := self.peek(0); tok.Kind == lexer.CLOSE_BRACKET {
-				aty.Level++
-				aty.Lens = append(aty.Lens, -1) // NOTE: I use -1 means don't know
-			} else if tok.Kind == lexer.INT_LITERAL {
-				aty.Level++
-				aty.Lens = append(aty.Lens, tok.AsInt())
-				self.next()
+				// NOTE: I use -1 means don't know
+				ile := &IntLiteralExpr{Node: Node{self.ctx}, Tok: lexer.MakeToken(lexer.INT_LITERAL, "-1")}
+				aty.LenExprs = append(aty.LenExprs, ile)
 			} else {
-				self.parseError(tok, "invalid array type specifier")
+				aty.LenExprs = append(aty.LenExprs, self.parseExpression(0))
 			}
 			self.match(lexer.CLOSE_BRACKET)
 
@@ -1808,10 +1809,12 @@ func (self *Parser) DumpSymbols() {
 
 func (self *Parser) DumpAst() {
 	var (
-		stack  int = 0
-		scope  *SymbolScope
-		scopes []*SymbolScope
-		clr    int
+		stack     int = 0
+		scope     *SymbolScope
+		scopes    []*SymbolScope
+		arraymode bool
+		arraylog  []string
+		clr       int
 	)
 
 	var Pop = func() *SymbolScope {
@@ -1827,21 +1830,21 @@ func (self *Parser) DumpAst() {
 
 	var walker = struct {
 		WalkTranslationUnit      func(WalkStage, *TranslationUnit)
-		WalkIntLiteralExpr       func(ws WalkStage, e *IntLiteralExpr)
-		WalkCharLiteralExpr      func(ws WalkStage, e *CharLiteralExpr)
-		WalkStringLiteralExpr    func(ws WalkStage, e *StringLiteralExpr)
-		WalkBinaryOperation      func(ws WalkStage, e *BinaryOperation)
-		WalkDeclRefExpr          func(ws WalkStage, e *DeclRefExpr)
-		WalkUnaryOperation       func(ws WalkStage, e *UnaryOperation)
-		WalkSizeofExpr           func(ws WalkStage, e *SizeofExpr)
-		WalkConditionalOperation func(ws WalkStage, e *ConditionalOperation)
-		WalkArraySubscriptExpr   func(ws WalkStage, e *ArraySubscriptExpr)
-		WalkMemberExpr           func(ws WalkStage, e *MemberExpr)
-		WalkFunctionCall         func(ws WalkStage, e *FunctionCall)
-		WalkCompoundAssignExpr   func(ws WalkStage, e *CompoundAssignExpr)
-		WalkCastExpr             func(ws WalkStage, e *CastExpr)
-		WalkCompoundLiteralExpr  func(ws WalkStage, e *CompoundLiteralExpr)
-		WalkInitListExpr         func(ws WalkStage, e *InitListExpr)
+		WalkIntLiteralExpr       func(ws WalkStage, e *IntLiteralExpr) bool
+		WalkCharLiteralExpr      func(ws WalkStage, e *CharLiteralExpr) bool
+		WalkStringLiteralExpr    func(ws WalkStage, e *StringLiteralExpr) bool
+		WalkBinaryOperation      func(ws WalkStage, e *BinaryOperation) bool
+		WalkDeclRefExpr          func(ws WalkStage, e *DeclRefExpr) bool
+		WalkUnaryOperation       func(ws WalkStage, e *UnaryOperation) bool
+		WalkSizeofExpr           func(ws WalkStage, e *SizeofExpr) bool
+		WalkConditionalOperation func(ws WalkStage, e *ConditionalOperation) bool
+		WalkArraySubscriptExpr   func(ws WalkStage, e *ArraySubscriptExpr) bool
+		WalkMemberExpr           func(ws WalkStage, e *MemberExpr) bool
+		WalkFunctionCall         func(ws WalkStage, e *FunctionCall) bool
+		WalkCompoundAssignExpr   func(ws WalkStage, e *CompoundAssignExpr) bool
+		WalkCastExpr             func(ws WalkStage, e *CastExpr) bool
+		WalkCompoundLiteralExpr  func(ws WalkStage, e *CompoundLiteralExpr) bool
+		WalkInitListExpr         func(ws WalkStage, e *InitListExpr) bool
 		WalkFieldDecl            func(ws WalkStage, e *FieldDecl)
 		WalkRecordDecl           func(ws WalkStage, e *RecordDecl)
 		WalkEnumeratorDecl       func(ws WalkStage, e *EnumeratorDecl)
@@ -1868,10 +1871,14 @@ func (self *Parser) DumpAst() {
 	}{}
 
 	var log = func(msg string) {
-		if 1 == stack {
-			clr = rand.Intn(200) + 50
+		if arraymode {
+			arraylog = append(arraylog, msg)
+		} else {
+			if 1 == stack {
+				clr = rand.Intn(200) + 50
+			}
+			fmt.Print(fmt.Sprintf("\033[38;5;%dm%s%s\033[00m\n", clr, strings.Repeat("  ", stack), msg))
 		}
-		fmt.Print(fmt.Sprintf("\033[38;5;%dm%s%s\033[00m\n", clr, strings.Repeat("  ", stack), msg))
 	}
 
 	walker.WalkTranslationUnit = func(ws WalkStage, tu *TranslationUnit) {
@@ -1884,41 +1891,84 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	walker.WalkIntLiteralExpr = func(ws WalkStage, e *IntLiteralExpr) {
+	walker.WalkIntLiteralExpr = func(ws WalkStage, e *IntLiteralExpr) bool {
 		if ws == WalkerPropagate {
-			log(e.Repr())
+			if arraymode {
+				arraylog = append(arraylog, e.Tok.AsString())
+				return false
+			} else {
+				log(e.Repr())
+			}
 		}
+		return true
 	}
 
-	walker.WalkCharLiteralExpr = func(ws WalkStage, e *CharLiteralExpr) {
+	walker.WalkCharLiteralExpr = func(ws WalkStage, e *CharLiteralExpr) bool {
 		if ws == WalkerPropagate {
-			log(e.Repr())
+			if arraymode {
+				arraylog = append(arraylog, e.Tok.AsString())
+				return false
+			} else {
+				log(e.Repr())
+			}
 		}
+		return true
 	}
-	walker.WalkStringLiteralExpr = func(ws WalkStage, e *StringLiteralExpr) {
+	walker.WalkStringLiteralExpr = func(ws WalkStage, e *StringLiteralExpr) bool {
 		if ws == WalkerPropagate {
-			log(e.Repr())
+			if arraymode {
+				arraylog = append(arraylog, e.Tok.AsString())
+				return false
+			} else {
+				log(e.Repr())
+			}
 		}
+		return true
 	}
 
-	walker.WalkBinaryOperation = func(ws WalkStage, e *BinaryOperation) {
+	walker.WalkBinaryOperation = func(ws WalkStage, e *BinaryOperation) bool {
 		if ws == WalkerPropagate {
-			var ty = reflect.TypeOf(e).Elem()
-			log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
+			if arraymode {
+				WalkAst(e.LHS, walker)
+				arraylog = append(arraylog, lexer.TokKinds[e.Op])
+				WalkAst(e.RHS, walker)
+				return false
+
+			} else {
+				var ty = reflect.TypeOf(e).Elem()
+				log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
+			}
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
 
-	walker.WalkDeclRefExpr = func(ws WalkStage, e *DeclRefExpr) {
+	walker.WalkDeclRefExpr = func(ws WalkStage, e *DeclRefExpr) bool {
 		if ws == WalkerPropagate {
-			log(e.Repr())
+			if arraymode {
+				arraylog = append(arraylog, e.Name)
+				return false
+			} else {
+				log(e.Repr())
+			}
 		}
+		return true
 	}
 
-	walker.WalkSizeofExpr = func(ws WalkStage, e *SizeofExpr) {
+	walker.WalkSizeofExpr = func(ws WalkStage, e *SizeofExpr) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				arraylog = append(arraylog, "sizeof ")
+				if e.Type != nil {
+					arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
+				} else {
+					WalkAst(e.Expr, walker)
+				}
+				return false
+			}
+
 			if e.Type == nil {
 				log("SizeofExpr")
 			} else {
@@ -1928,79 +1978,153 @@ func (self *Parser) DumpAst() {
 		} else {
 			stack--
 		}
+		return true
 	}
-	walker.WalkUnaryOperation = func(ws WalkStage, e *UnaryOperation) {
+	walker.WalkUnaryOperation = func(ws WalkStage, e *UnaryOperation) bool {
 		if ws == WalkerPropagate {
-			var ty = reflect.TypeOf(e).Elem()
-			if e.Postfix {
-				log(fmt.Sprintf("%s(postfix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+			if arraymode {
+				if e.Postfix {
+					WalkAst(e.Expr, walker)
+					arraylog = append(arraylog, lexer.TokKinds[e.Op])
+				} else {
+					arraylog = append(arraylog, "(")
+					arraylog = append(arraylog, lexer.TokKinds[e.Op])
+					WalkAst(e.Expr, walker)
+					arraylog = append(arraylog, ")")
+				}
+				return false
+
 			} else {
-				log(fmt.Sprintf("%s(prefix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+				var ty = reflect.TypeOf(e).Elem()
+				if e.Postfix {
+					log(fmt.Sprintf("%s(postfix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+				} else {
+					log(fmt.Sprintf("%s(prefix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+				}
 			}
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
-	walker.WalkConditionalOperation = func(ws WalkStage, e *ConditionalOperation) {
+	walker.WalkConditionalOperation = func(ws WalkStage, e *ConditionalOperation) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				WalkAst(e.Cond, walker)
+				arraylog = append(arraylog, "?")
+				WalkAst(e.True, walker)
+				arraylog = append(arraylog, ":")
+				WalkAst(e.False, walker)
+				return false
+			}
 			log("ConditionalOperation")
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
 
-	walker.WalkArraySubscriptExpr = func(ws WalkStage, e *ArraySubscriptExpr) {
+	walker.WalkArraySubscriptExpr = func(ws WalkStage, e *ArraySubscriptExpr) bool {
 		if ws == WalkerPropagate {
-			log("ArraySubscriptExpr")
+			if !arraymode {
+				log("ArraySubscriptExpr")
+			} else {
+				//arraylog = append(arraylog, "(")
+				WalkAst(e.Target, walker)
+				//arraylog = append(arraylog, ")")
+				arraylog = append(arraylog, "[")
+				WalkAst(e.Sub, walker)
+				arraylog = append(arraylog, "]")
+				return false
+			}
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
 
-	walker.WalkMemberExpr = func(ws WalkStage, e *MemberExpr) {
+	walker.WalkMemberExpr = func(ws WalkStage, e *MemberExpr) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				WalkAst(e.Target, walker)
+				arraylog = append(arraylog, ".")
+				WalkAst(e.Member, walker)
+				return false
+			}
+
 			log("MemberExpr")
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
-	walker.WalkFunctionCall = func(ws WalkStage, e *FunctionCall) {
+	walker.WalkFunctionCall = func(ws WalkStage, e *FunctionCall) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				WalkAst(e.Func, walker)
+				arraylog = append(arraylog, "(")
+				for _, a := range e.Args {
+					WalkAst(a, walker)
+				}
+				arraylog = append(arraylog, ")")
+
+				return false
+			}
 			log("FunctionCall")
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
-	walker.WalkCompoundAssignExpr = func(ws WalkStage, e *CompoundAssignExpr) {
+	walker.WalkCompoundAssignExpr = func(ws WalkStage, e *CompoundAssignExpr) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				WalkAst(e.LHS, walker)
+				arraylog = append(arraylog, lexer.TokKinds[e.Op])
+				WalkAst(e.RHS, walker)
+				return false
+			}
 			var ty = reflect.TypeOf(e).Elem()
 			log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
 
-	walker.WalkCastExpr = func(ws WalkStage, e *CastExpr) {
+	walker.WalkCastExpr = func(ws WalkStage, e *CastExpr) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
+				WalkAst(e.Expr, walker)
+				return false
+			}
 			log(fmt.Sprintf("CastExpr(%s)", e.Type))
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
-	walker.WalkCompoundLiteralExpr = func(ws WalkStage, e *CompoundLiteralExpr) {
+	walker.WalkCompoundLiteralExpr = func(ws WalkStage, e *CompoundLiteralExpr) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
+				WalkAst(e.InitList, walker)
+				return false
+			}
 			log(fmt.Sprintf("CompoundLiteralExpr(%s)", e.Type))
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
 
 	walker.WalkBreakStmt = func(ws WalkStage, e *BreakStmt) {
@@ -2015,13 +2139,22 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	walker.WalkInitListExpr = func(ws WalkStage, e *InitListExpr) {
+	walker.WalkInitListExpr = func(ws WalkStage, e *InitListExpr) bool {
 		if ws == WalkerPropagate {
+			if arraymode {
+				arraylog = append(arraylog, "{")
+				for _, e2 := range e.inits {
+					WalkAst(e2, walker)
+				}
+				arraylog = append(arraylog, "}")
+				return false
+			}
 			log("InitListExpr")
 			stack++
 		} else {
 			stack--
 		}
+		return true
 	}
 	walker.WalkFieldDecl = func(ws WalkStage, e *FieldDecl) {
 		if ws == WalkerPropagate {
@@ -2074,10 +2207,22 @@ func (self *Parser) DumpAst() {
 		}
 	}
 	walker.WalkVariableDecl = func(ws WalkStage, e *VariableDecl) {
+		sym := scope.LookupSymbol(e.Sym, false)
 		if ws == WalkerPropagate {
-			sym := scope.LookupSymbol(e.Sym, false)
+			if ty, isArray := sym.Type.(*Array); isArray {
+				arraymode = true
+				for _, expr := range ty.LenExprs {
+					arraylog = append(arraylog, "[")
+					WalkAst(expr, walker)
+					arraylog = append(arraylog, "]")
+				}
+				arraymode = false
+				log(fmt.Sprintf("VarDecl('%s' %s)", strings.Join(arraylog, ""), e.Sym))
+				arraylog = nil
+			} else {
+				log(fmt.Sprintf("VarDecl(%s)", sym))
+			}
 
-			log(fmt.Sprintf("VarDecl(%s)", sym))
 			stack++
 		} else {
 			stack--

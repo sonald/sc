@@ -432,6 +432,14 @@ const (
 	WalkerBubbleUp
 )
 
+// AstWalker is empty and defined nothing at all
+// It requires that any object that implement AstWalker should contains
+// some functions like Wak*AstType*(WalkStage, Ast), e.g
+//		WalkTranslationUnit(WalkStage, ast Ast) bool
+// or without return arg
+//		WalkArraySubscriptExpr(WalkStage, ast Ast)
+// the return value bool is optional, if defined, return false to stop
+// traversal.
 type AstWalker interface {
 }
 
@@ -439,18 +447,24 @@ func WalkAst(top Ast, wk AstWalker) {
 	var wkValue = reflect.ValueOf(wk)
 	var visit func(ast Ast)
 
-	var tryCall = func(stage WalkStage, ast Ast) {
+	var tryCall = func(stage WalkStage, ast Ast) bool {
 		var method = wkValue.FieldByName("Walk" + reflect.TypeOf(ast).Elem().Name())
 		if method.IsValid() {
-			method.Call([]reflect.Value{reflect.ValueOf(stage), reflect.ValueOf(ast)})
+			ret := method.Call([]reflect.Value{reflect.ValueOf(stage), reflect.ValueOf(ast)})
+			if len(ret) > 0 && ret[0].Kind() == reflect.Bool && !ret[0].Bool() {
+				return false
+			}
 		}
+		return true
 	}
 
 	visit = func(ast Ast) {
 		switch ast.(type) {
 		case *TranslationUnit:
 			tu := ast.(*TranslationUnit)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			for _, d := range tu.varDecls {
 				visit(d)
 			}
@@ -470,150 +484,242 @@ func WalkAst(top Ast, wk AstWalker) {
 			for _, d := range tu.funcDecls {
 				visit(d)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *IntLiteralExpr:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *CharLiteralExpr:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *StringLiteralExpr:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *BinaryOperation:
 			var e = ast.(*BinaryOperation)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.LHS)
 			visit(e.RHS)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *DeclRefExpr:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *UnaryOperation:
 			var e = ast.(*UnaryOperation)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Expr)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *SizeofExpr:
 			var e = ast.(*SizeofExpr)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			if e.Expr != nil {
 				visit(e.Expr)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *ConditionalOperation:
 			e := ast.(*ConditionalOperation)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Cond)
 			visit(e.True)
 			visit(e.False)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *ArraySubscriptExpr:
 			e := ast.(*ArraySubscriptExpr)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Target)
 			visit(e.Sub)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *MemberExpr:
 			e := ast.(*MemberExpr)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Target)
 			visit(e.Member)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *FunctionCall:
 			e := ast.(*FunctionCall)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Func)
 			for _, arg := range e.Args {
 				visit(arg)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *CompoundAssignExpr:
 			var e = ast.(*CompoundAssignExpr)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.LHS)
 			visit(e.RHS)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *CastExpr:
 			e := ast.(*CastExpr)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Expr)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *CompoundLiteralExpr:
 			e := ast.(*CompoundLiteralExpr)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.InitList)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *InitListExpr:
 			e := ast.(*InitListExpr)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			for _, init := range e.inits {
 				visit(init)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *FieldDecl:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *RecordDecl:
 			e := ast.(*RecordDecl)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			for _, f := range e.Fields {
 				visit(f)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *EnumeratorDecl:
 			e := ast.(*EnumeratorDecl)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			if e.Value != nil {
 				visit(e.Value)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *EnumDecl:
 			e := ast.(*EnumDecl)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			for _, f := range e.List {
 				visit(f)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *TypedefDecl:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *VariableDecl:
 			e := ast.(*VariableDecl)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			if e.init != nil {
 				visit(e.init)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *ParamDecl:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *FunctionDecl:
 			e := ast.(*FunctionDecl)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			for _, arg := range e.Args {
 				visit(arg)
 			}
@@ -621,42 +727,66 @@ func WalkAst(top Ast, wk AstWalker) {
 			if e.Body != nil {
 				visit(e.Body)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *ExprStmt:
 			e := ast.(*ExprStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Expr)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *LabelStmt:
 			e := ast.(*LabelStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Stmt)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *CaseStmt:
 			e := ast.(*CaseStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.ConstExpr)
 			visit(e.Stmt)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *DefaultStmt:
 			e := ast.(*DefaultStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Stmt)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *ReturnStmt:
 			e := ast.(*ReturnStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Expr)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *IfStmt:
 			e := ast.(*IfStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Cond)
 			if e.TrueBranch != nil {
 				visit(e.TrueBranch)
@@ -664,32 +794,48 @@ func WalkAst(top Ast, wk AstWalker) {
 			if e.FalseBranch != nil {
 				visit(e.FalseBranch)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *SwitchStmt:
 			e := ast.(*SwitchStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Cond)
 			visit(e.Body)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *WhileStmt:
 			e := ast.(*WhileStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Cond)
 			visit(e.Body)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *DoStmt:
 			e := ast.(*DoStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			visit(e.Body)
 			visit(e.Cond)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *DeclStmt:
 			e := ast.(*DeclStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			for _, stmt := range e.Decls {
 				visit(stmt)
 			}
@@ -706,11 +852,15 @@ func WalkAst(top Ast, wk AstWalker) {
 				visit(d)
 			}
 
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *ForStmt:
 			e := ast.(*ForStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			if e.Decl != nil {
 				visit(e.Decl)
 			} else {
@@ -719,27 +869,45 @@ func WalkAst(top Ast, wk AstWalker) {
 			visit(e.Cond)
 			visit(e.Step)
 			visit(e.Body)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *GotoStmt:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *ContinueStmt:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *BreakStmt:
-			tryCall(WalkerPropagate, ast)
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		case *CompoundStmt:
 			e := ast.(*CompoundStmt)
-			tryCall(WalkerPropagate, ast)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
 			for _, stmt := range e.Stmts {
 				visit(stmt)
 			}
-			tryCall(WalkerBubbleUp, ast)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
 
 		default:
 			break

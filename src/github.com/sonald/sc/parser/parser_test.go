@@ -93,6 +93,10 @@ void signal(int signo, ...);
 func TestParseComplexDecls(t *testing.T) {
 	var text = `
 int (*ids)[5];
+
+// this is acctually semantically wrong
+char alphas[(*ids)[2]][(*ids)[1]];
+
 int (*fp)(void, void);
 int *const *const ccfp[];
 int (*const wokers [])(unsigned int);
@@ -108,12 +112,18 @@ const unsigned char volatile (
 			unsigned int (*const)(const char, int, float), char *const*)
 		)[12]
 	)(int (**)[50]);
+
+struct work {
+	int kind;
+	int payload[10];
+} s;
+char alphas2[alphas[0] + alphas[1]][fp()][sizeof s.payload + s.kind];
 `
 	ast := testTemplate(t, text)
 	if tu, ok := ast.(*TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.varDecls == nil || len(tu.varDecls) != 9 {
+		if tu.varDecls == nil || len(tu.varDecls) != 12 {
 			t.Errorf("failed to parse some vars")
 		}
 	}

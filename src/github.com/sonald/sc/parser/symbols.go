@@ -164,7 +164,9 @@ func (f *Function) String() string {
 type Array struct {
 	ElemType SymbolType
 	Level    int
-	Lens     []int // length of each level
+	//NOTE: this is a little odd and inpure..., can I come up with
+	// another elegant solution?
+	LenExprs []Expression
 }
 
 func (a *Array) String() string {
@@ -176,11 +178,7 @@ func (a *Array) String() string {
 	}
 
 	for i := 0; i < a.Level; i++ {
-		if a.Lens[i] == -1 {
-			s += fmt.Sprintf("[]")
-		} else {
-			s += fmt.Sprintf("[%d]", a.Lens[i])
-		}
+		s += fmt.Sprintf("[]")
 	}
 	return s
 }
