@@ -4,6 +4,7 @@ package util
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -36,11 +37,14 @@ func (d Domain) String() string {
 }
 
 const (
-	Debug Level = iota
-	Info
+	Critical Level = iota
 	Warning
-	Critical
+	Info
+	Debug
+	Verbose
 )
+
+var AllowedLevel = Warning
 
 type color struct {
 	pre  string
@@ -73,6 +77,10 @@ func Println(v ...interface{}) {
 		return
 	}
 
+	if lv > AllowedLevel {
+		return
+	}
+
 	fmt = strings.Repeat("%v", len(v)-beg)
 	log.Printf(dom.String()+catalogs[lv].pre+fmt+catalogs[lv].post, v[beg:]...)
 }
@@ -94,6 +102,10 @@ func Printf(v ...interface{}) {
 		}
 	}
 
+	if lv > AllowedLevel {
+		return
+	}
+
 	if (AllowedDomains & int(dom)) == 0 {
 		return
 	}
@@ -109,6 +121,14 @@ func init() {
 	}
 
 	if dom, ok := os.LookupEnv("SC_DEBUG"); ok {
+		if lv, err := strconv.ParseInt(dom, 10, 32); err == nil {
+			if lv > int64(Verbose) {
+				lv = int64(Verbose)
+			}
+			AllowedLevel = Level(lv)
+			return
+		}
+
 		var doms = strings.Split(strings.ToLower(dom), ",")
 
 		AllowedDomains = 0
@@ -124,6 +144,7 @@ func init() {
 				AllowedDomains |= int(CodeGen)
 			case "all":
 				AllowedDomains |= int(All)
+			default:
 			}
 		}
 	}

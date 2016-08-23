@@ -470,7 +470,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		if tok := self.peek(0); tok.Kind == lexer.LPAREN {
 			self.match(lexer.LPAREN)
 			nestedPartial = parseDeclaratorHelper()
-			util.Printf(util.Parser, util.Warning, "level %d: -> nested %v\n", nested, nestedPartial.ty)
+			util.Printf(util.Parser, util.Verbose, "level %d: -> nested %v\n", nested, nestedPartial.ty)
 			self.match(lexer.RPAREN)
 		} else if tok.Kind == lexer.IDENTIFIER {
 			self.next()
@@ -488,7 +488,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		switch self.peek(0).Kind {
 		case lexer.OPEN_BRACKET:
 			var pt = parseArray()
-			util.Printf(util.Parser, util.Warning, "level %d: -> array %v %v\n", nested, pt.ty, pt.hole)
+			util.Printf(util.Parser, util.Verbose, "level %d: -> array %v %v\n", nested, pt.ty, pt.hole)
 			if basePartial.ty != nil {
 				*pt.hole = basePartial.ty
 				pt.hole = basePartial.hole
@@ -573,7 +573,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			}
 		}
 
-		util.Printf(util.Parser, util.Warning, "level %d: -> %v", nested, basePartial.ty)
+		util.Printf(util.Parser, util.Verbose, "level %d: -> %v", nested, basePartial.ty)
 		nested--
 		return basePartial
 	}
@@ -597,7 +597,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		self.AddUserType(finalSym.Type)
 	}
 
-	util.Printf(util.Parser, util.Warning, "parsed %v %v", finalSym.Name.AsString(), finalSym.Type)
+	util.Printf(util.Parser, util.Verbose, "parsed %v %v", finalSym.Name.AsString(), finalSym.Type)
 	return decl
 }
 
@@ -1359,7 +1359,7 @@ func (self *Parser) parseExprStatement() (ret *ExprStmt) {
 	self.mayIgnore(lexer.SEMICOLON)
 
 	if exprStmt.Expr == nil {
-		util.Printf(util.Parser, util.Warning, "null expression")
+		util.Printf(util.Parser, util.Warning, "null expression near %v\n", self.peek(0))
 		return nil
 	}
 
