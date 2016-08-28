@@ -105,6 +105,7 @@ func (self *Parser) parseTU(opts *ParseOption) ast.Ast {
 	self.tu.Filename = opts.Filename
 	self.effectiveParent = self.tu
 	self.ctx.Top.Owner = self.tu
+	self.tu.Ctx = self.ctx
 
 	for self.peek(0).Kind != lexer.EOT {
 		self.parseExternalDecl()
@@ -1790,64 +1791,51 @@ func (self *Parser) DumpSymbols() {
 func (self *Parser) DumpAst() {
 	var (
 		stack     int = 0
-		scope     *ast.SymbolScope
-		scopes    []*ast.SymbolScope
 		arraymode bool
 		arraylog  []string
 		clr       int
 	)
 
-	var Pop = func() *ast.SymbolScope {
-		sc := scopes[len(scopes)-1]
-		scopes = scopes[:len(scopes)-1]
-		return sc
-	}
-
-	var Push = func(sc *ast.SymbolScope) {
-		scopes = append(scopes, sc)
-		scope = sc
-	}
-
 	var walker = struct {
-		WalkTranslationUnit      func(ast.WalkStage, *ast.TranslationUnit)
-		WalkIntLiteralExpr       func(ws ast.WalkStage, e *ast.IntLiteralExpr) bool
-		WalkCharLiteralExpr      func(ws ast.WalkStage, e *ast.CharLiteralExpr) bool
-		WalkStringLiteralExpr    func(ws ast.WalkStage, e *ast.StringLiteralExpr) bool
-		WalkBinaryOperation      func(ws ast.WalkStage, e *ast.BinaryOperation) bool
-		WalkDeclRefExpr          func(ws ast.WalkStage, e *ast.DeclRefExpr) bool
-		WalkUnaryOperation       func(ws ast.WalkStage, e *ast.UnaryOperation) bool
-		WalkSizeofExpr           func(ws ast.WalkStage, e *ast.SizeofExpr) bool
-		WalkConditionalOperation func(ws ast.WalkStage, e *ast.ConditionalOperation) bool
-		WalkArraySubscriptExpr   func(ws ast.WalkStage, e *ast.ArraySubscriptExpr) bool
-		WalkMemberExpr           func(ws ast.WalkStage, e *ast.MemberExpr) bool
-		WalkFunctionCall         func(ws ast.WalkStage, e *ast.FunctionCall) bool
-		WalkCompoundAssignExpr   func(ws ast.WalkStage, e *ast.CompoundAssignExpr) bool
-		WalkCastExpr             func(ws ast.WalkStage, e *ast.CastExpr) bool
-		WalkCompoundLiteralExpr  func(ws ast.WalkStage, e *ast.CompoundLiteralExpr) bool
-		WalkInitListExpr         func(ws ast.WalkStage, e *ast.InitListExpr) bool
-		WalkFieldDecl            func(ws ast.WalkStage, e *ast.FieldDecl)
-		WalkRecordDecl           func(ws ast.WalkStage, e *ast.RecordDecl)
-		WalkEnumeratorDecl       func(ws ast.WalkStage, e *ast.EnumeratorDecl)
-		WalkEnumDecl             func(ws ast.WalkStage, e *ast.EnumDecl)
-		WalkVariableDecl         func(ws ast.WalkStage, e *ast.VariableDecl)
-		WalkTypedefDecl          func(ws ast.WalkStage, e *ast.TypedefDecl)
-		WalkParamDecl            func(ws ast.WalkStage, e *ast.ParamDecl)
-		WalkFunctionDecl         func(ws ast.WalkStage, e *ast.FunctionDecl)
-		WalkExprStmt             func(ws ast.WalkStage, e *ast.ExprStmt)
-		WalkLabelStmt            func(ws ast.WalkStage, e *ast.LabelStmt)
-		WalkCaseStmt             func(ws ast.WalkStage, e *ast.CaseStmt)
-		WalkDefaultStmt          func(ws ast.WalkStage, e *ast.DefaultStmt)
-		WalkReturnStmt           func(ws ast.WalkStage, e *ast.ReturnStmt)
-		WalkIfStmt               func(ws ast.WalkStage, e *ast.IfStmt)
-		WalkSwitchStmt           func(ws ast.WalkStage, e *ast.SwitchStmt)
-		WalkWhileStmt            func(ws ast.WalkStage, e *ast.WhileStmt)
-		WalkDoStmt               func(ws ast.WalkStage, e *ast.DoStmt)
-		WalkDeclStmt             func(ws ast.WalkStage, e *ast.DeclStmt)
-		WalkForStmt              func(ws ast.WalkStage, e *ast.ForStmt)
-		WalkGotoStmt             func(ws ast.WalkStage, e *ast.GotoStmt)
-		WalkContinueStmt         func(ws ast.WalkStage, e *ast.ContinueStmt)
-		WalkBreakStmt            func(ws ast.WalkStage, e *ast.BreakStmt)
-		WalkCompoundStmt         func(ws ast.WalkStage, e *ast.CompoundStmt)
+		WalkTranslationUnit      func(ast.WalkStage, *ast.TranslationUnit, *ast.WalkContext)
+		WalkIntLiteralExpr       func(ws ast.WalkStage, e *ast.IntLiteralExpr, ctx *ast.WalkContext) bool
+		WalkCharLiteralExpr      func(ws ast.WalkStage, e *ast.CharLiteralExpr, ctx *ast.WalkContext) bool
+		WalkStringLiteralExpr    func(ws ast.WalkStage, e *ast.StringLiteralExpr, ctx *ast.WalkContext) bool
+		WalkBinaryOperation      func(ws ast.WalkStage, e *ast.BinaryOperation, ctx *ast.WalkContext) bool
+		WalkDeclRefExpr          func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool
+		WalkUnaryOperation       func(ws ast.WalkStage, e *ast.UnaryOperation, ctx *ast.WalkContext) bool
+		WalkSizeofExpr           func(ws ast.WalkStage, e *ast.SizeofExpr, ctx *ast.WalkContext) bool
+		WalkConditionalOperation func(ws ast.WalkStage, e *ast.ConditionalOperation, ctx *ast.WalkContext) bool
+		WalkArraySubscriptExpr   func(ws ast.WalkStage, e *ast.ArraySubscriptExpr, ctx *ast.WalkContext) bool
+		WalkMemberExpr           func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) bool
+		WalkFunctionCall         func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) bool
+		WalkCompoundAssignExpr   func(ws ast.WalkStage, e *ast.CompoundAssignExpr, ctx *ast.WalkContext) bool
+		WalkCastExpr             func(ws ast.WalkStage, e *ast.CastExpr, ctx *ast.WalkContext) bool
+		WalkCompoundLiteralExpr  func(ws ast.WalkStage, e *ast.CompoundLiteralExpr, ctx *ast.WalkContext) bool
+		WalkInitListExpr         func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) bool
+		WalkFieldDecl            func(ws ast.WalkStage, e *ast.FieldDecl, ctx *ast.WalkContext)
+		WalkRecordDecl           func(ws ast.WalkStage, e *ast.RecordDecl, ctx *ast.WalkContext)
+		WalkEnumeratorDecl       func(ws ast.WalkStage, e *ast.EnumeratorDecl, ctx *ast.WalkContext)
+		WalkEnumDecl             func(ws ast.WalkStage, e *ast.EnumDecl, ctx *ast.WalkContext)
+		WalkVariableDecl         func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext)
+		WalkTypedefDecl          func(ws ast.WalkStage, e *ast.TypedefDecl, ctx *ast.WalkContext)
+		WalkParamDecl            func(ws ast.WalkStage, e *ast.ParamDecl, ctx *ast.WalkContext)
+		WalkFunctionDecl         func(ws ast.WalkStage, e *ast.FunctionDecl, ctx *ast.WalkContext)
+		WalkExprStmt             func(ws ast.WalkStage, e *ast.ExprStmt, ctx *ast.WalkContext)
+		WalkLabelStmt            func(ws ast.WalkStage, e *ast.LabelStmt, ctx *ast.WalkContext)
+		WalkCaseStmt             func(ws ast.WalkStage, e *ast.CaseStmt, ctx *ast.WalkContext)
+		WalkDefaultStmt          func(ws ast.WalkStage, e *ast.DefaultStmt, ctx *ast.WalkContext)
+		WalkReturnStmt           func(ws ast.WalkStage, e *ast.ReturnStmt, ctx *ast.WalkContext)
+		WalkIfStmt               func(ws ast.WalkStage, e *ast.IfStmt, ctx *ast.WalkContext)
+		WalkSwitchStmt           func(ws ast.WalkStage, e *ast.SwitchStmt, ctx *ast.WalkContext)
+		WalkWhileStmt            func(ws ast.WalkStage, e *ast.WhileStmt, ctx *ast.WalkContext)
+		WalkDoStmt               func(ws ast.WalkStage, e *ast.DoStmt, ctx *ast.WalkContext)
+		WalkDeclStmt             func(ws ast.WalkStage, e *ast.DeclStmt, ctx *ast.WalkContext)
+		WalkForStmt              func(ws ast.WalkStage, e *ast.ForStmt, ctx *ast.WalkContext)
+		WalkGotoStmt             func(ws ast.WalkStage, e *ast.GotoStmt, ctx *ast.WalkContext)
+		WalkContinueStmt         func(ws ast.WalkStage, e *ast.ContinueStmt, ctx *ast.WalkContext)
+		WalkBreakStmt            func(ws ast.WalkStage, e *ast.BreakStmt, ctx *ast.WalkContext)
+		WalkCompoundStmt         func(ws ast.WalkStage, e *ast.CompoundStmt, ctx *ast.WalkContext)
 	}{}
 
 	var log = func(msg string) {
@@ -1861,9 +1849,8 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	walker.WalkTranslationUnit = func(ws ast.WalkStage, tu *ast.TranslationUnit) {
+	walker.WalkTranslationUnit = func(ws ast.WalkStage, tu *ast.TranslationUnit, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			scope = self.ctx.Top
 			log("ast.TranslationUnit")
 			stack++
 		} else {
@@ -1871,7 +1858,7 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	walker.WalkIntLiteralExpr = func(ws ast.WalkStage, e *ast.IntLiteralExpr) bool {
+	walker.WalkIntLiteralExpr = func(ws ast.WalkStage, e *ast.IntLiteralExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Tok.AsString())
@@ -1883,7 +1870,7 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkCharLiteralExpr = func(ws ast.WalkStage, e *ast.CharLiteralExpr) bool {
+	walker.WalkCharLiteralExpr = func(ws ast.WalkStage, e *ast.CharLiteralExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Tok.AsString())
@@ -1894,7 +1881,7 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkStringLiteralExpr = func(ws ast.WalkStage, e *ast.StringLiteralExpr) bool {
+	walker.WalkStringLiteralExpr = func(ws ast.WalkStage, e *ast.StringLiteralExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Tok.AsString())
@@ -1906,7 +1893,7 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkBinaryOperation = func(ws ast.WalkStage, e *ast.BinaryOperation) bool {
+	walker.WalkBinaryOperation = func(ws ast.WalkStage, e *ast.BinaryOperation, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				ast.WalkAst(e.LHS, walker)
@@ -1925,7 +1912,7 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr) bool {
+	walker.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Name)
@@ -1937,7 +1924,7 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkSizeofExpr = func(ws ast.WalkStage, e *ast.SizeofExpr) bool {
+	walker.WalkSizeofExpr = func(ws ast.WalkStage, e *ast.SizeofExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, "sizeof ")
@@ -1960,7 +1947,7 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkUnaryOperation = func(ws ast.WalkStage, e *ast.UnaryOperation) bool {
+	walker.WalkUnaryOperation = func(ws ast.WalkStage, e *ast.UnaryOperation, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				if e.Postfix {
@@ -1988,7 +1975,7 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkConditionalOperation = func(ws ast.WalkStage, e *ast.ConditionalOperation) bool {
+	walker.WalkConditionalOperation = func(ws ast.WalkStage, e *ast.ConditionalOperation, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				ast.WalkAst(e.Cond, walker)
@@ -2006,7 +1993,7 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkArraySubscriptExpr = func(ws ast.WalkStage, e *ast.ArraySubscriptExpr) bool {
+	walker.WalkArraySubscriptExpr = func(ws ast.WalkStage, e *ast.ArraySubscriptExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if !arraymode {
 				log("ast.ArraySubscriptExpr")
@@ -2026,7 +2013,7 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkMemberExpr = func(ws ast.WalkStage, e *ast.MemberExpr) bool {
+	walker.WalkMemberExpr = func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				ast.WalkAst(e.Target, walker)
@@ -2042,7 +2029,7 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkFunctionCall = func(ws ast.WalkStage, e *ast.FunctionCall) bool {
+	walker.WalkFunctionCall = func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				ast.WalkAst(e.Func, walker)
@@ -2061,7 +2048,7 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkCompoundAssignExpr = func(ws ast.WalkStage, e *ast.CompoundAssignExpr) bool {
+	walker.WalkCompoundAssignExpr = func(ws ast.WalkStage, e *ast.CompoundAssignExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				ast.WalkAst(e.LHS, walker)
@@ -2078,7 +2065,7 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkCastExpr = func(ws ast.WalkStage, e *ast.CastExpr) bool {
+	walker.WalkCastExpr = func(ws ast.WalkStage, e *ast.CastExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
@@ -2092,7 +2079,7 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkCompoundLiteralExpr = func(ws ast.WalkStage, e *ast.CompoundLiteralExpr) bool {
+	walker.WalkCompoundLiteralExpr = func(ws ast.WalkStage, e *ast.CompoundLiteralExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
@@ -2107,19 +2094,19 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkBreakStmt = func(ws ast.WalkStage, e *ast.BreakStmt) {
+	walker.WalkBreakStmt = func(ws ast.WalkStage, e *ast.BreakStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.BreakStmt")
 		}
 	}
 
-	walker.WalkContinueStmt = func(ws ast.WalkStage, e *ast.ContinueStmt) {
+	walker.WalkContinueStmt = func(ws ast.WalkStage, e *ast.ContinueStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.ContinueStmt")
 		}
 	}
 
-	walker.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr) bool {
+	walker.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, "{")
@@ -2136,14 +2123,14 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkFieldDecl = func(ws ast.WalkStage, e *ast.FieldDecl) {
+	walker.WalkFieldDecl = func(ws ast.WalkStage, e *ast.FieldDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log(fmt.Sprintf("ast.FieldDecl(%s)", e.Sym))
 		}
 	}
-	walker.WalkRecordDecl = func(ws ast.WalkStage, e *ast.RecordDecl) {
+	walker.WalkRecordDecl = func(ws ast.WalkStage, e *ast.RecordDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := scope.LookupSymbol(e.Sym, true)
+			sym := ctx.Scope.LookupSymbol(e.Sym, true)
 
 			ty := "struct"
 			if sym.Type.(*ast.RecordType).Union {
@@ -2157,13 +2144,11 @@ func (self *Parser) DumpAst() {
 			}
 			stack++
 
-			Push(e.Scope)
 		} else {
 			stack--
-			scope = Pop()
 		}
 	}
-	walker.WalkEnumeratorDecl = func(ws ast.WalkStage, e *ast.EnumeratorDecl) {
+	walker.WalkEnumeratorDecl = func(ws ast.WalkStage, e *ast.EnumeratorDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log(fmt.Sprintf("Enumerator(%s)", e.Sym))
 			stack++
@@ -2171,7 +2156,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkEnumDecl = func(ws ast.WalkStage, e *ast.EnumDecl) {
+	walker.WalkEnumDecl = func(ws ast.WalkStage, e *ast.EnumDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log(fmt.Sprintf("ast.EnumDecl(%s prev %p)", e.Sym, e.Prev))
 			stack++
@@ -2180,9 +2165,9 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkTypedefDecl = func(ws ast.WalkStage, e *ast.TypedefDecl) {
+	walker.WalkTypedefDecl = func(ws ast.WalkStage, e *ast.TypedefDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := scope.LookupSymbol(e.Sym, true)
+			sym := ctx.Scope.LookupSymbol(e.Sym, true)
 
 			log(fmt.Sprintf("ast.TypedefDecl(%s)", sym))
 			stack++
@@ -2190,8 +2175,8 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl) {
-		sym := scope.LookupSymbol(e.Sym, false)
+	walker.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext) {
+		sym := ctx.Scope.LookupSymbol(e.Sym, false)
 		if ws == ast.WalkerPropagate {
 			if ty, isArray := sym.Type.(*ast.Array); isArray {
 				arraymode = true
@@ -2212,9 +2197,9 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkParamDecl = func(ws ast.WalkStage, e *ast.ParamDecl) {
+	walker.WalkParamDecl = func(ws ast.WalkStage, e *ast.ParamDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := scope.LookupSymbol(e.Sym, false)
+			sym := ctx.Scope.LookupSymbol(e.Sym, false)
 			ty := reflect.TypeOf(e).Elem()
 			log(fmt.Sprintf("%s(%v)", ty.Name(), sym))
 			stack++
@@ -2222,18 +2207,16 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkFunctionDecl = func(ws ast.WalkStage, e *ast.FunctionDecl) {
+	walker.WalkFunctionDecl = func(ws ast.WalkStage, e *ast.FunctionDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := scope.LookupSymbol(e.Name, false)
+			sym := ctx.Scope.LookupSymbol(e.Name, false)
 			log(fmt.Sprintf("FuncDecl(%v)", sym))
-			Push(e.Scope)
 			stack++
 		} else {
 			stack--
-			scope = Pop()
 		}
 	}
-	walker.WalkExprStmt = func(ws ast.WalkStage, e *ast.ExprStmt) {
+	walker.WalkExprStmt = func(ws ast.WalkStage, e *ast.ExprStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.ExprStmt")
 			stack++
@@ -2241,7 +2224,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkLabelStmt = func(ws ast.WalkStage, e *ast.LabelStmt) {
+	walker.WalkLabelStmt = func(ws ast.WalkStage, e *ast.LabelStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log(fmt.Sprintf("ast.LabelStmt(%s)", e.Label))
 			stack++
@@ -2250,7 +2233,7 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	walker.WalkCaseStmt = func(ws ast.WalkStage, e *ast.CaseStmt) {
+	walker.WalkCaseStmt = func(ws ast.WalkStage, e *ast.CaseStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.CaseStmt")
 			stack++
@@ -2258,7 +2241,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkDefaultStmt = func(ws ast.WalkStage, e *ast.DefaultStmt) {
+	walker.WalkDefaultStmt = func(ws ast.WalkStage, e *ast.DefaultStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.DefaultStmt")
 			stack++
@@ -2266,7 +2249,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkReturnStmt = func(ws ast.WalkStage, e *ast.ReturnStmt) {
+	walker.WalkReturnStmt = func(ws ast.WalkStage, e *ast.ReturnStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.ReturnStmt")
 			stack++
@@ -2274,7 +2257,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkSwitchStmt = func(ws ast.WalkStage, e *ast.SwitchStmt) {
+	walker.WalkSwitchStmt = func(ws ast.WalkStage, e *ast.SwitchStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.SwitchStmt")
 			stack++
@@ -2282,7 +2265,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkWhileStmt = func(ws ast.WalkStage, e *ast.WhileStmt) {
+	walker.WalkWhileStmt = func(ws ast.WalkStage, e *ast.WhileStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.WhileStmt")
 			stack++
@@ -2290,7 +2273,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkDoStmt = func(ws ast.WalkStage, e *ast.DoStmt) {
+	walker.WalkDoStmt = func(ws ast.WalkStage, e *ast.DoStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.DoStmt")
 			stack++
@@ -2298,7 +2281,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkDeclStmt = func(ws ast.WalkStage, e *ast.DeclStmt) {
+	walker.WalkDeclStmt = func(ws ast.WalkStage, e *ast.DeclStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.DeclStmt")
 			stack++
@@ -2306,7 +2289,7 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkIfStmt = func(ws ast.WalkStage, e *ast.IfStmt) {
+	walker.WalkIfStmt = func(ws ast.WalkStage, e *ast.IfStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log("ast.IfStmt")
 			stack++
@@ -2315,7 +2298,7 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	walker.WalkGotoStmt = func(ws ast.WalkStage, e *ast.GotoStmt) {
+	walker.WalkGotoStmt = func(ws ast.WalkStage, e *ast.GotoStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			log(fmt.Sprintf("Goto(%s)", e.Label))
 			stack++
@@ -2323,25 +2306,21 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkForStmt = func(ws ast.WalkStage, e *ast.ForStmt) {
+	walker.WalkForStmt = func(ws ast.WalkStage, e *ast.ForStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 
-			Push(e.Scope)
 			log("ast.ForStmt")
 			stack++
 		} else {
 			stack--
-			scope = Pop()
 		}
 	}
-	walker.WalkCompoundStmt = func(ws ast.WalkStage, e *ast.CompoundStmt) {
+	walker.WalkCompoundStmt = func(ws ast.WalkStage, e *ast.CompoundStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			Push(e.Scope)
 			log("ast.CompoundStmt")
 			stack++
 		} else {
 			stack--
-			scope = Pop()
 		}
 	}
 

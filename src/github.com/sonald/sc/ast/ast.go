@@ -443,14 +443,42 @@ const (
 type AstWalker interface {
 }
 
+const (
+	PropagateOnly = 0x01
+	BubbleUpOnly  = 0x02
+)
+
+type WalkContext struct {
+	// current effective scope
+	Scope *SymbolScope
+	Flags uint
+}
+
 func WalkAst(top Ast, wk AstWalker) {
-	var wkValue = reflect.ValueOf(wk)
-	var visit func(ast Ast)
+	var (
+		wkValue = reflect.ValueOf(wk)
+		visit   func(ast Ast)
+		ctx     = &WalkContext{}
+		scopes  []*SymbolScope
+	)
+
+	var Pop = func() *SymbolScope {
+		sc := scopes[len(scopes)-1]
+		scopes = scopes[:len(scopes)-1]
+		ctx.Scope = sc
+		return sc
+	}
+
+	var Push = func(sc *SymbolScope) {
+		scopes = append(scopes, sc)
+		ctx.Scope = sc
+	}
 
 	var tryCall = func(stage WalkStage, ast Ast) bool {
 		var method = wkValue.FieldByName("Walk" + reflect.TypeOf(ast).Elem().Name())
 		if method.IsValid() {
-			ret := method.Call([]reflect.Value{reflect.ValueOf(stage), reflect.ValueOf(ast)})
+			ret := method.Call([]reflect.Value{reflect.ValueOf(stage), reflect.ValueOf(ast),
+				reflect.ValueOf(ctx)})
 			if len(ret) > 0 && ret[0].Kind() == reflect.Bool && !ret[0].Bool() {
 				return false
 			}
@@ -462,7 +490,9 @@ func WalkAst(top Ast, wk AstWalker) {
 		switch ast.(type) {
 		case *TranslationUnit:
 			tu := ast.(*TranslationUnit)
+			Push(tu.Ctx.Top)
 			if !tryCall(WalkerPropagate, ast) {
+				Pop()
 				return
 			}
 			for _, d := range tu.VarDecls {
@@ -485,8 +515,10 @@ func WalkAst(top Ast, wk AstWalker) {
 				visit(d)
 			}
 			if !tryCall(WalkerBubbleUp, ast) {
+				Pop()
 				return
 			}
+			Pop()
 
 		case *IntLiteralExpr:
 			if !tryCall(WalkerPropagate, ast) {
@@ -653,15 +685,19 @@ func WalkAst(top Ast, wk AstWalker) {
 
 		case *RecordDecl:
 			e := ast.(*RecordDecl)
+			Push(e.Scope)
 			if !tryCall(WalkerPropagate, ast) {
+				Pop()
 				return
 			}
 			for _, f := range e.Fields {
 				visit(f)
 			}
 			if !tryCall(WalkerBubbleUp, ast) {
+				Pop()
 				return
 			}
+			Pop()
 
 		case *EnumeratorDecl:
 			e := ast.(*EnumeratorDecl)
@@ -717,7 +753,9 @@ func WalkAst(top Ast, wk AstWalker) {
 
 		case *FunctionDecl:
 			e := ast.(*FunctionDecl)
+			Push(e.Scope)
 			if !tryCall(WalkerPropagate, ast) {
+				Pop()
 				return
 			}
 			for _, arg := range e.Args {
@@ -728,8 +766,10 @@ func WalkAst(top Ast, wk AstWalker) {
 				visit(e.Body)
 			}
 			if !tryCall(WalkerBubbleUp, ast) {
+				Pop()
 				return
 			}
+			Pop()
 
 		case *ExprStmt:
 			e := ast.(*ExprStmt)
@@ -858,7 +898,9 @@ func WalkAst(top Ast, wk AstWalker) {
 
 		case *ForStmt:
 			e := ast.(*ForStmt)
+			Push(e.Scope)
 			if !tryCall(WalkerPropagate, ast) {
+				Pop()
 				return
 			}
 			if e.Decl != nil {
@@ -870,8 +912,10 @@ func WalkAst(top Ast, wk AstWalker) {
 			visit(e.Step)
 			visit(e.Body)
 			if !tryCall(WalkerBubbleUp, ast) {
+				Pop()
 				return
 			}
+			Pop()
 
 		case *GotoStmt:
 			if !tryCall(WalkerPropagate, ast) {
@@ -899,15 +943,19 @@ func WalkAst(top Ast, wk AstWalker) {
 
 		case *CompoundStmt:
 			e := ast.(*CompoundStmt)
+			Push(e.Scope)
 			if !tryCall(WalkerPropagate, ast) {
+				Pop()
 				return
 			}
 			for _, stmt := range e.Stmts {
 				visit(stmt)
 			}
 			if !tryCall(WalkerBubbleUp, ast) {
+				Pop()
 				return
 			}
+			Pop()
 
 		default:
 			break
