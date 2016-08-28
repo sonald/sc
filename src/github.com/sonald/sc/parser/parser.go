@@ -2170,7 +2170,11 @@ func (self *Parser) DumpAst() {
 				ty = "union"
 			}
 
-			log(fmt.Sprintf("RecordDecl(%s %s prev %p)", ty, e.Sym, e.Prev))
+			if e.Prev != nil {
+				log(fmt.Sprintf("RecordDecl(%s %s prev %p)", ty, e.Sym, e.Prev))
+			} else {
+				log(fmt.Sprintf("RecordDecl(%s %s)", ty, e.Sym))
+			}
 			stack++
 
 			Push(e.Scope)

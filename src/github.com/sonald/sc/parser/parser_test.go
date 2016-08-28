@@ -286,28 +286,24 @@ int N = 10;
 }
 
 //FIXME: this is be done by sema
-func testDetectLoop(t *testing.T) {
+func TestDetectLoop(t *testing.T) {
 	var text = `
 struct Tree {
     int payload;
     struct Tree Left, *Right;
 } tree;
 
-/*
-struct Node {
-    int payload;
-    const struct Node Left, *Right;
-} nd;
 
+struct Node2;
 // indirect nest
 struct Node {
-    int payload;
-    struct Node2 child;
+	int payload;
+	struct Node2 child;
 } nd;
 struct Node2 {
 	struct Node val;
 };
-*/
+
 `
 	testTemplate(t, text)
 }

@@ -27,4 +27,7 @@ fill 3 into []
 + insert type conversion
 + struct/union: detect type loops (direct or indirect)
     this should be done in ast traversal stage
-
++ type checking
++ type propagation
++ insrt cast node (include rvalue casting)
++ lvalue check

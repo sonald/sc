@@ -197,6 +197,7 @@ func (ft *FieldType) String() string {
 	if strings.HasPrefix(ft.Name, "!") {
 		nm = ""
 	}
+
 	if ft.Tag != nil {
 		return fmt.Sprintf("%v %s:%d", ft.Base, nm, *ft.Tag)
 	}
@@ -228,8 +229,9 @@ func (s *RecordType) String() string {
 		nm = ""
 	}
 	var str = fmt.Sprintf("%s %s{", kd, s.Name)
+	// there could be a loop, so do not print field types, only names
 	for i, f := range s.Fields {
-		str += fmt.Sprintf("%s", f)
+		str += fmt.Sprintf("%s", f.Name)
 		if i < len(s.Fields)-1 {
 			str += "; "
 		}
