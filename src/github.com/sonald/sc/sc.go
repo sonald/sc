@@ -23,10 +23,21 @@ func main() {
 	flag.Parse()
 
 	if flag.NArg() == 0 {
-		fmt.Printf("no src file specified\n")
+		opts := parser.ParseOption{
+			Verbose: beVerbose,
+		}
+
+		opts.Reader = os.Stdin
+		p := parser.NewParser()
+		p.Parse(&opts)
+
+		if dumpAst {
+			p.DumpAst()
+		}
+		return
 	}
+
 	for _, f := range flag.Args() {
-		fmt.Printf("Compiling %s", f)
 		opts := parser.ParseOption{
 			Filename: f,
 			Verbose:  beVerbose,
