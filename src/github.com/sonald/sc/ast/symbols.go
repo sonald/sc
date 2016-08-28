@@ -1,4 +1,4 @@
-package parser
+package ast
 
 import (
 	"fmt"
@@ -392,4 +392,46 @@ func (scope *SymbolScope) LookupUserType(name string) SymbolType {
 	}
 
 	return nil
+}
+
+var Storages map[string]Storage
+
+var TypeSpecifier map[string]bool
+
+var TypeQualifier map[string]Qualifier
+
+func IsStorageClass(tok lexer.Token) bool {
+	_, ok := Storages[tok.AsString()]
+	return ok
+}
+
+func IsTypeSpecifier(tok lexer.Token) bool {
+	_, ok := TypeSpecifier[tok.AsString()]
+	return ok
+}
+
+func IsTypeQualifier(tok lexer.Token) bool {
+	_, ok := TypeQualifier[tok.AsString()]
+	return ok
+}
+
+func init() {
+	Storages = make(map[string]Storage)
+	Storages["auto"] = Auto
+	Storages["static"] = Static
+	Storages["extern"] = External
+	Storages["register"] = Register
+	Storages["typedef"] = Typedef
+
+	TypeSpecifier = make(map[string]bool)
+	var ts = [...]string{"void", "char", "short", "int", "long", "float",
+		"double", "signed", "unsigned", "struct", "union", "enum"}
+	for _, v := range ts {
+		TypeSpecifier[v] = true
+	}
+
+	TypeQualifier = make(map[string]Qualifier)
+	TypeQualifier["const"] = Const
+	TypeQualifier["restrict"] = Restrict
+	TypeQualifier["volatile"] = Volatile
 }

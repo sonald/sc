@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"github.com/sonald/sc/ast"
 	"github.com/sonald/sc/lexer"
 	"github.com/sonald/sc/util"
 	"io"
@@ -19,10 +20,10 @@ type Parser struct {
 	tokens          [NR_LA]lexer.Token // support 4-lookahead
 	cursor          int
 	eot             bool // meet EOT
-	ctx             *AstContext
-	currentScope    *SymbolScope
-	tu              *TranslationUnit
-	effectiveParent Ast // This is a bad name, it is used for RecordDecl parsing
+	ctx             *ast.AstContext
+	currentScope    *ast.SymbolScope
+	tu              *ast.TranslationUnit
+	effectiveParent ast.Ast // This is a bad name, it is used for ast.RecordDecl parsing
 	verbose         bool
 }
 
@@ -35,8 +36,8 @@ type ParseOption struct {
 func NewParser() *Parser {
 	p := &Parser{}
 
-	var top = SymbolScope{}
-	p.ctx = &AstContext{top: &top}
+	var top = ast.SymbolScope{}
+	p.ctx = &ast.AstContext{Top: &top}
 	p.currentScope = &top
 
 	return p
@@ -85,7 +86,7 @@ func (self *Parser) match(kd lexer.Kind) {
 }
 
 // the only entry
-func (self *Parser) Parse(opts *ParseOption) Ast {
+func (self *Parser) Parse(opts *ParseOption) ast.Ast {
 	self.lex = lexer.NewScanner(opts.Reader)
 	for i := range self.tokens {
 		self.tokens[i] = self.getNextToken()
@@ -97,13 +98,13 @@ func (self *Parser) Parse(opts *ParseOption) Ast {
 }
 
 // translation-unit: external-declaration+
-func (self *Parser) parseTU(opts *ParseOption) Ast {
+func (self *Parser) parseTU(opts *ParseOption) ast.Ast {
 	defer self.trace("")()
 
-	self.tu = &TranslationUnit{}
-	self.tu.filename = opts.Filename
+	self.tu = &ast.TranslationUnit{}
+	self.tu.Filename = opts.Filename
 	self.effectiveParent = self.tu
-	self.ctx.top.Owner = self.tu
+	self.ctx.Top.Owner = self.tu
 
 	for self.peek(0).Kind != lexer.EOT {
 		self.parseExternalDecl()
@@ -111,36 +112,15 @@ func (self *Parser) parseTU(opts *ParseOption) Ast {
 	return self.tu
 }
 
-var storages map[string]Storage
-
-var typeSpecifier map[string]bool
-
-var typeQualifier map[string]Qualifier
-
-func isStorageClass(tok lexer.Token) bool {
-	_, ok := storages[tok.AsString()]
-	return ok
-}
-
-func isTypeSpecifier(tok lexer.Token) bool {
-	_, ok := typeSpecifier[tok.AsString()]
-	return ok
-}
-
-func isTypeQualifier(tok lexer.Token) bool {
-	_, ok := typeQualifier[tok.AsString()]
-	return ok
-}
-
 func (self *Parser) parseError(tok lexer.Token, msg string) {
 	panic(fmt.Sprintf("tok %s(%s) %d:%d, %s", lexer.TokKinds[tok.Kind], tok.AsString(),
 		tok.Line, tok.Column, msg))
 }
 
-func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
+func (self *Parser) parseTypeDecl(sym *ast.Symbol) (isTypedef bool) {
 	defer self.trace("")()
 	var (
-		ty   SymbolType
+		ty   ast.SymbolType
 		err1 = "%s can not combine with %s type specifier"
 		err2 = "%s is invalid type"
 		err3 = "invalid combination of type specifiers"
@@ -191,18 +171,18 @@ func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
 	for {
 		tok := self.peek(0)
 		if tok.Kind == lexer.KEYWORD {
-			if isStorageClass(tok) {
+			if ast.IsStorageClass(tok) {
 				self.next()
-				if sym.Storage == NilStorage {
-					sym.Storage = storages[tok.AsString()]
-					if sym.Storage == Typedef {
+				if sym.Storage == ast.NilStorage {
+					sym.Storage = ast.Storages[tok.AsString()]
+					if sym.Storage == ast.Typedef {
 						isTypedef = true
 						util.Printf(util.Parser, util.Critical, "this is a typedefing")
 					}
 				} else {
 					self.parseError(tok, "multiple storage class specified")
 				}
-			} else if isTypeSpecifier(tok) {
+			} else if ast.IsTypeSpecifier(tok) {
 				ts := tok.AsString()
 				switch ts {
 				case "union", "struct":
@@ -220,20 +200,20 @@ func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
 					case "int", "long", "char", "short", "unsigned", "signed":
 						break
 					case "void":
-						ty = &VoidType{}
+						ty = &ast.VoidType{}
 					case "float":
-						ty = &FloatType{}
+						ty = &ast.FloatType{}
 					case "double":
-						ty = &DoubleType{}
+						ty = &ast.DoubleType{}
 					default:
 						self.parseError(tok, "unknown type specifier")
 					}
 				}
 				doCheckError(tok)
 
-			} else if isTypeQualifier(tok) {
+			} else if ast.IsTypeQualifier(tok) {
 				self.next()
-				sym.Type = &QualifiedType{Base: sym.Type, Qualifier: typeQualifier[tok.AsString()]}
+				sym.Type = &ast.QualifiedType{Base: sym.Type, Qualifier: ast.TypeQualifier[tok.AsString()]}
 				//self.parseError(tok, "multiple type qualifier specified")
 			} else if tok.AsString() == "inline" {
 				self.next()
@@ -264,7 +244,7 @@ func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
 			s        = len(parts["short"])
 			unsigned = len(parts["unsigned"])
 		)
-		ity := &IntegerType{}
+		ity := &ast.IntegerType{}
 		if l > 0 {
 			if l >= 2 {
 				ity.Kind = "long long"
@@ -292,9 +272,9 @@ func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
 	if sym.Type == nil {
 		sym.Type = ty
 	} else {
-		var qty = sym.Type.(*QualifiedType)
+		var qty = sym.Type.(*ast.QualifiedType)
 		for qty.Base != nil {
-			qty = qty.Base.(*QualifiedType)
+			qty = qty.Base.(*ast.QualifiedType)
 		}
 		qty.Base = ty
 	}
@@ -303,7 +283,7 @@ func (self *Parser) parseTypeDecl(sym *Symbol) (isTypedef bool) {
 	return
 }
 
-func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
+func (self *Parser) parseFunctionParams(decl *ast.FunctionDecl, ty *ast.Function) {
 	defer self.trace("")()
 
 	for {
@@ -321,7 +301,7 @@ func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
 			continue
 		}
 
-		var tmpl = &Symbol{}
+		var tmpl = &ast.Symbol{}
 		if isTypedef := self.parseTypeDecl(tmpl); isTypedef {
 			self.parseError(self.peek(0), "typedef is not allowed in function param")
 		}
@@ -329,8 +309,8 @@ func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
 			break
 		} else {
 			switch arg.(type) {
-			case *VariableDecl:
-				var pd = &ParamDecl{decl.Node, arg.(*VariableDecl).Sym}
+			case *ast.VariableDecl:
+				var pd = &ast.ParamDecl{decl.Node, arg.(*ast.VariableDecl).Sym}
 				decl.Args = append(decl.Args, pd)
 
 				pty := decl.Scope.LookupSymbol(pd.Sym, false)
@@ -347,7 +327,7 @@ func (self *Parser) parseFunctionParams(decl *FunctionDecl, ty *Function) {
 	}
 }
 
-func (self *Parser) parseFunctionParamTypes(ty *Function) {
+func (self *Parser) parseFunctionParamTypes(ty *ast.Function) {
 	defer self.trace("")()
 
 	for {
@@ -364,7 +344,7 @@ func (self *Parser) parseFunctionParamTypes(ty *Function) {
 			continue
 		}
 
-		var tmpl = &Symbol{}
+		var tmpl = &ast.Symbol{}
 		if isTypedef := self.parseTypeDecl(tmpl); isTypedef {
 			self.parseError(self.peek(0), "typedef is not allowed in function param")
 		}
@@ -372,8 +352,8 @@ func (self *Parser) parseFunctionParamTypes(ty *Function) {
 			break
 		} else {
 			switch arg.(type) {
-			case *VariableDecl:
-				var pd = arg.(*VariableDecl).Sym
+			case *ast.VariableDecl:
+				var pd = arg.(*ast.VariableDecl).Sym
 				pty := self.LookupSymbol(pd)
 				ty.Args = append(ty.Args, pty.Type)
 				util.Printf("parsed arg type %v", pty.Type)
@@ -388,20 +368,20 @@ func (self *Parser) parseFunctionParamTypes(ty *Function) {
 	}
 }
 
-func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
+func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 	defer self.trace("")()
 	type Partial struct {
-		ty   SymbolType
-		hole *SymbolType
+		ty   ast.SymbolType
+		hole *ast.SymbolType
 	}
 	var (
 		parseDeclaratorHelper func() Partial
-		decl                  Ast
+		decl                  ast.Ast
 		id                    *lexer.Token
 		idLevel               = 0
-		finalSym              = Symbol{Storage: tmpl.Storage}
+		finalSym              = ast.Symbol{Storage: tmpl.Storage}
 		nested                = 0 // nested level
-		isTypedef             = tmpl.Storage == Typedef
+		isTypedef             = tmpl.Storage == ast.Typedef
 	)
 
 	//FIXME: support const-expr
@@ -409,7 +389,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		defer self.trace("")()
 		var (
 			partial = Partial{}
-			aty     = &Array{}
+			aty     = &ast.Array{}
 		)
 
 		partial.ty = aty
@@ -420,7 +400,7 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			aty.Level++
 			if tok := self.peek(0); tok.Kind == lexer.CLOSE_BRACKET {
 				// NOTE: I use -1 means don't know
-				ile := &IntLiteralExpr{Node: Node{self.ctx}, Tok: lexer.MakeToken(lexer.INT_LITERAL, "-1")}
+				ile := &ast.IntLiteralExpr{Node: ast.Node{self.ctx}, Tok: lexer.MakeToken(lexer.INT_LITERAL, "-1")}
 				aty.LenExprs = append(aty.LenExprs, ile)
 			} else {
 				aty.LenExprs = append(aty.LenExprs, self.parseExpression(0))
@@ -449,17 +429,17 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		switch tok.Kind {
 		case lexer.MUL:
 			self.next()
-			basePartial = Partial{&Pointer{}, nil}
-			basePartial.hole = &basePartial.ty.(*Pointer).Source
+			basePartial = Partial{&ast.Pointer{}, nil}
+			basePartial.hole = &basePartial.ty.(*ast.Pointer).Source
 			var baseType = basePartial.ty
 			for {
-				if forward := self.peek(0); isTypeQualifier(forward) {
+				if forward := self.peek(0); ast.IsTypeQualifier(forward) {
 					self.next()
-					baseType = &QualifiedType{Base: baseType, Qualifier: typeQualifier[forward.AsString()]}
+					baseType = &ast.QualifiedType{Base: baseType, Qualifier: ast.TypeQualifier[forward.AsString()]}
 
 				} else if forward.Kind == lexer.MUL {
 					self.next()
-					baseType = &Pointer{baseType}
+					baseType = &ast.Pointer{baseType}
 				} else {
 					break
 				}
@@ -504,41 +484,41 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 
 			if nested == 1 && id != nil {
 				if isTypedef {
-					decl = &TypedefDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+					decl = &ast.TypedefDecl{Node: ast.Node{self.ctx}, Sym: id.AsString()}
 				} else {
-					decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+					decl = &ast.VariableDecl{Node: ast.Node{self.ctx}, Sym: id.AsString()}
 				}
 			}
 
 		case lexer.LPAREN: // func
 			self.match(lexer.LPAREN)
 			var pt = Partial{}
-			pt.ty = &Function{Return: basePartial.ty}
+			pt.ty = &ast.Function{Return: basePartial.ty}
 			if basePartial.ty != nil {
 				pt.hole = basePartial.hole
 			}
 
 			if nested == 1 && id != nil && idLevel == nested {
-				var fdecl = &FunctionDecl{Node: Node{self.ctx}}
+				var fdecl = &ast.FunctionDecl{Node: ast.Node{self.ctx}}
 				decl = fdecl
 				fdecl.Name = id.AsString()
 				// when found definition of func, we need to chain fdecl.Scope with body
 				fdecl.Scope = self.PushScope()
 				fdecl.Scope.Owner = fdecl
-				self.parseFunctionParams(fdecl, pt.ty.(*Function))
+				self.parseFunctionParams(fdecl, pt.ty.(*ast.Function))
 				self.PopScope()
 
 			} else {
 				// this is just a temp scope to capture params
 				if nested == 1 && id != nil {
 					if isTypedef {
-						decl = &TypedefDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+						decl = &ast.TypedefDecl{Node: ast.Node{self.ctx}, Sym: id.AsString()}
 					} else {
-						decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+						decl = &ast.VariableDecl{Node: ast.Node{self.ctx}, Sym: id.AsString()}
 					}
 				}
 				self.PushScope()
-				self.parseFunctionParamTypes(pt.ty.(*Function))
+				self.parseFunctionParamTypes(pt.ty.(*ast.Function))
 				self.PopScope()
 			}
 			self.match(lexer.RPAREN)
@@ -554,9 +534,9 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 		default:
 			if id != nil {
 				if isTypedef {
-					decl = &TypedefDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+					decl = &ast.TypedefDecl{Node: ast.Node{self.ctx}, Sym: id.AsString()}
 				} else {
-					decl = &VariableDecl{Node: Node{self.ctx}, Sym: id.AsString()}
+					decl = &ast.VariableDecl{Node: ast.Node{self.ctx}, Sym: id.AsString()}
 				}
 			}
 		}
@@ -566,8 +546,8 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 			// parse initializer
 			self.next()
 			switch decl.(type) {
-			case *VariableDecl:
-				decl.(*VariableDecl).init = self.parseInitializerList()
+			case *ast.VariableDecl:
+				decl.(*ast.VariableDecl).Init = self.parseInitializerList()
 			default:
 				self.parseError(self.peek(0), "Initializer is not allowed here (only variables can be initialized)")
 			}
@@ -587,13 +567,13 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 	if decl == nil && id == nil && pt.ty != nil {
 		// this happens if we are parsing types only (such as func params)
 		// so make a dummy decl
-		finalSym.Name = lexer.MakeToken(lexer.IDENTIFIER, NextDummyVariableName())
-		decl = &VariableDecl{Node: Node{self.ctx}, Sym: finalSym.Name.AsString()}
+		finalSym.Name = lexer.MakeToken(lexer.IDENTIFIER, ast.NextDummyVariableName())
+		decl = &ast.VariableDecl{Node: ast.Node{self.ctx}, Sym: finalSym.Name.AsString()}
 		self.AddSymbol(&finalSym)
 	}
 
 	if isTypedef {
-		finalSym.Type = &UserType{id.AsString(), finalSym.Type}
+		finalSym.Type = &ast.UserType{id.AsString(), finalSym.Type}
 		self.AddUserType(finalSym.Type)
 	}
 
@@ -601,12 +581,12 @@ func (self *Parser) parseDeclarator(tmpl *Symbol) Ast {
 	return decl
 }
 
-func (self *Parser) parseEnumType() SymbolType {
+func (self *Parser) parseEnumType() ast.SymbolType {
 	defer self.trace("")()
 	var (
-		enumDecl  = &EnumDecl{Node: Node{self.ctx}}
-		ret       = &EnumType{}
-		enumSym   = &Symbol{}
+		enumDecl  = &ast.EnumDecl{Node: ast.Node{self.ctx}}
+		ret       = &ast.EnumType{}
+		enumSym   = &ast.Symbol{}
 		tok       lexer.Token
 		isForward bool
 	)
@@ -618,12 +598,12 @@ func (self *Parser) parseEnumType() SymbolType {
 		ret.Name = tok.AsString()
 		enumSym.Name = tok
 		if ty := self.LookupUserType(ret.Name); ty != nil {
-			var decls []*EnumDecl
+			var decls []*ast.EnumDecl
 			switch self.effectiveParent.(type) {
-			case *DeclStmt:
-				decls = self.effectiveParent.(*DeclStmt).EnumDecls
-			case *TranslationUnit:
-				decls = self.tu.enumDecls
+			case *ast.DeclStmt:
+				decls = self.effectiveParent.(*ast.DeclStmt).EnumDecls
+			case *ast.TranslationUnit:
+				decls = self.tu.EnumDecls
 			default:
 				return ty
 			}
@@ -634,7 +614,7 @@ func (self *Parser) parseEnumType() SymbolType {
 			for _, decl := range decls {
 				if decl.Sym == ret.Name && !decl.IsDefinition {
 					enumSym = self.LookupTypeSymbol(ret.Name)
-					ret = ty.(*EnumType)
+					ret = ty.(*ast.EnumType)
 					isForward = true
 					enumDecl.Prev = decl
 					break
@@ -646,17 +626,17 @@ func (self *Parser) parseEnumType() SymbolType {
 			}
 		}
 	} else {
-		ret.Name = NextAnonyEnumName()
+		ret.Name = ast.NextAnonyEnumName()
 	}
 
 	enumSym.Type = ret
 	enumDecl.Sym = ret.Name
 	defer func() {
 		if p := recover(); p == nil {
-			if ds, ok := self.effectiveParent.(*DeclStmt); ok {
+			if ds, ok := self.effectiveParent.(*ast.DeclStmt); ok {
 				ds.EnumDecls = append(ds.EnumDecls, enumDecl)
 			} else {
-				self.tu.enumDecls = append(self.tu.enumDecls, enumDecl)
+				self.tu.EnumDecls = append(self.tu.EnumDecls, enumDecl)
 			}
 		} else {
 			panic(p) //propagate
@@ -682,9 +662,9 @@ func (self *Parser) parseEnumType() SymbolType {
 		}
 
 		var (
-			e  = &EnumeratorDecl{Node: enumDecl.Node}
-			es = &Symbol{}
-			et = &EnumeratorType{}
+			e  = &ast.EnumeratorDecl{Node: enumDecl.Node}
+			es = &ast.Symbol{}
+			et = &ast.EnumeratorType{}
 		)
 		tok = self.next()
 		if tok.Kind != lexer.IDENTIFIER {
@@ -717,17 +697,17 @@ func (self *Parser) parseEnumType() SymbolType {
 
 	self.match(lexer.RBRACE)
 
-	util.Printf("parsed EnumType: %v", ret)
+	util.Printf("parsed ast.EnumType: %v", ret)
 
 	return ret
 }
 
-func (self *Parser) parseRecordType() SymbolType {
+func (self *Parser) parseRecordType() ast.SymbolType {
 	defer self.trace("")()
 	var (
-		recDecl   = &RecordDecl{Node: Node{self.ctx}}
-		recSym    = &Symbol{}
-		ret       = &RecordType{}
+		recDecl   = &ast.RecordDecl{Node: ast.Node{self.ctx}}
+		recSym    = &ast.Symbol{}
+		ret       = &ast.RecordType{}
 		tok       lexer.Token
 		isForward bool
 	)
@@ -739,12 +719,12 @@ func (self *Parser) parseRecordType() SymbolType {
 		ret.Name = tok.AsString()
 		recSym.Name = tok
 		if ty := self.LookupUserType(ret.Name); ty != nil {
-			var decls []*RecordDecl
+			var decls []*ast.RecordDecl
 			switch self.effectiveParent.(type) {
-			case *DeclStmt:
-				decls = self.effectiveParent.(*DeclStmt).RecordDecls
-			case *TranslationUnit:
-				decls = self.tu.recordDecls
+			case *ast.DeclStmt:
+				decls = self.effectiveParent.(*ast.DeclStmt).RecordDecls
+			case *ast.TranslationUnit:
+				decls = self.tu.RecordDecls
 			default:
 				return ty
 			}
@@ -755,7 +735,7 @@ func (self *Parser) parseRecordType() SymbolType {
 			for _, decl := range decls {
 				if decl.Sym == ret.Name && !decl.IsDefinition {
 					recSym = self.LookupTypeSymbol(ret.Name)
-					ret = ty.(*RecordType)
+					ret = ty.(*ast.RecordType)
 					isForward = true
 					recDecl.Scope = decl.Scope
 					recDecl.Prev = decl
@@ -768,7 +748,7 @@ func (self *Parser) parseRecordType() SymbolType {
 			}
 		}
 	} else {
-		ret.Name = NextAnonyRecordName()
+		ret.Name = ast.NextAnonyRecordName()
 	}
 
 	recSym.Type = ret
@@ -777,14 +757,14 @@ func (self *Parser) parseRecordType() SymbolType {
 	defer func() {
 		self.PopScope()
 		if p := recover(); p == nil {
-			if ds, ok := self.effectiveParent.(*DeclStmt); ok {
+			if ds, ok := self.effectiveParent.(*ast.DeclStmt); ok {
 				ds.RecordDecls = append(ds.RecordDecls, recDecl)
 			} else {
-				self.tu.recordDecls = append(self.tu.recordDecls, recDecl)
+				self.tu.RecordDecls = append(self.tu.RecordDecls, recDecl)
 			}
 		} else {
 			// if this is top level of record decl, skip it and continue
-			if _, ok := self.currentScope.Owner.(*RecordDecl); !ok {
+			if _, ok := self.currentScope.Owner.(*ast.RecordDecl); !ok {
 				util.Printf(util.Parser, util.Warning, p)
 				for tok := self.next(); tok.Kind != lexer.EOT && tok.Kind != lexer.RBRACE; tok = self.next() {
 				}
@@ -818,26 +798,26 @@ func (self *Parser) parseRecordType() SymbolType {
 			break
 		}
 
-		var tmplTy SymbolType
-		var tmplSym = &Symbol{}
+		var tmplTy ast.SymbolType
+		var tmplSym = &ast.Symbol{}
 		var loc = self.peek(0).Location
 
 		for {
 			tok := self.peek(0)
 			if tok.Kind == lexer.KEYWORD {
-				if isTypeSpecifier(tok) {
+				if ast.IsTypeSpecifier(tok) {
 					if tmplSym.Type != nil {
-						if _, qualified := tmplSym.Type.(*QualifiedType); !qualified {
+						if _, qualified := tmplSym.Type.(*ast.QualifiedType); !qualified {
 							self.parseError(tok, "multiple type specifier")
 						}
 					}
 					switch tok.AsString() {
 					case "int":
 						self.next()
-						tmplTy = &IntegerType{}
+						tmplTy = &ast.IntegerType{}
 					case "float":
 						self.next()
-						tmplTy = &FloatType{}
+						tmplTy = &ast.FloatType{}
 					case "union", "struct":
 						tmplTy = self.parseRecordType()
 
@@ -848,16 +828,16 @@ func (self *Parser) parseRecordType() SymbolType {
 					if tmplSym.Type == nil {
 						tmplSym.Type = tmplTy
 					} else {
-						var qty = tmplSym.Type.(*QualifiedType)
+						var qty = tmplSym.Type.(*ast.QualifiedType)
 						for qty.Base != nil {
-							qty = qty.Base.(*QualifiedType)
+							qty = qty.Base.(*ast.QualifiedType)
 						}
 						qty.Base = tmplTy
 					}
 
-				} else if isTypeQualifier(tok) {
+				} else if ast.IsTypeQualifier(tok) {
 					self.next()
-					tmplSym.Type = &QualifiedType{Base: tmplSym.Type, Qualifier: typeQualifier[tok.AsString()]}
+					tmplSym.Type = &ast.QualifiedType{Base: tmplSym.Type, Qualifier: ast.TypeQualifier[tok.AsString()]}
 				} else {
 					self.parseError(tok, "invalid field type specifier")
 				}
@@ -874,16 +854,16 @@ func (self *Parser) parseRecordType() SymbolType {
 				break
 			}
 
-			var fd = &FieldDecl{Node: Node{self.ctx}}
-			var ft = &FieldType{}
+			var fd = &ast.FieldDecl{Node: ast.Node{self.ctx}}
+			var ft = &ast.FieldType{}
 
 			if self.peek(0).Kind != lexer.COLON {
 				// FIXME: parseDeclarator will add new symbol into current scope,
 				// which will pollute scoping rule
 				var decl = self.parseDeclarator(tmplSym)
 				switch decl.(type) {
-				case *VariableDecl:
-					var vd = decl.(*VariableDecl)
+				case *ast.VariableDecl:
+					var vd = decl.(*ast.VariableDecl)
 					var vs = self.LookupSymbol(vd.Sym)
 
 					fd.Loc = vs.Name.Location
@@ -898,15 +878,15 @@ func (self *Parser) parseRecordType() SymbolType {
 				}
 			} else {
 				fd.Loc = loc
-				fd.Sym = NextAnonyFieldName(recDecl.Sym)
+				fd.Sym = ast.NextAnonyFieldName(recDecl.Sym)
 				recDecl.Fields = append(recDecl.Fields, fd)
 
 				ft.Base = tmplSym.Type
 				ft.Name = fd.Sym
 			}
 
-			// FIXME: parse an const expr here, but in that case, a SymbolType
-			// may contain an Expression (Ast) node which feels weird to me.
+			// FIXME: parse an const expr here, but in that case, a ast.SymbolType
+			// may contain an ast.Expression (ast.Ast) node which feels weird to me.
 			if self.peek(0).Kind == lexer.COLON {
 				self.next()
 				tag := self.peek(0).AsInt()
@@ -924,15 +904,15 @@ func (self *Parser) parseRecordType() SymbolType {
 
 	self.match(lexer.RBRACE)
 
-	util.Printf("parsed RecordType: %v", ret)
+	util.Printf("parsed ast.RecordType: %v", ret)
 	return ret
 }
 
-func (self *Parser) parseExternalDecl() Ast {
+func (self *Parser) parseExternalDecl() ast.Ast {
 	defer self.trace("")()
 	defer self.handlePanic(lexer.SEMICOLON)
 
-	var tmpl = &Symbol{}
+	var tmpl = &ast.Symbol{}
 	self.parseTypeDecl(tmpl)
 	for {
 		if self.peek(0).Kind == lexer.SEMICOLON {
@@ -944,15 +924,15 @@ func (self *Parser) parseExternalDecl() Ast {
 			break
 		} else {
 			switch decl.(type) {
-			case *TypedefDecl:
-				self.tu.typedefDecls = append(self.tu.typedefDecls, decl.(*TypedefDecl))
+			case *ast.TypedefDecl:
+				self.tu.TypedefDecls = append(self.tu.TypedefDecls, decl.(*ast.TypedefDecl))
 				util.Printf("parsed %v", decl.Repr())
-			case *VariableDecl:
-				self.tu.varDecls = append(self.tu.varDecls, decl.(*VariableDecl))
+			case *ast.VariableDecl:
+				self.tu.VarDecls = append(self.tu.VarDecls, decl.(*ast.VariableDecl))
 				util.Printf("parsed %v", decl.Repr())
-			case *FunctionDecl:
-				var fdecl = decl.(*FunctionDecl)
-				self.tu.funcDecls = append(self.tu.funcDecls, fdecl)
+			case *ast.FunctionDecl:
+				var fdecl = decl.(*ast.FunctionDecl)
+				self.tu.FuncDecls = append(self.tu.FuncDecls, fdecl)
 				util.Printf("parsed %v", decl.Repr())
 
 				if self.peek(0).Kind == lexer.LBRACE {
@@ -981,13 +961,13 @@ done:
 	return nil
 }
 
-func (self *Parser) parseCompoundStmt() *CompoundStmt {
+func (self *Parser) parseCompoundStmt() *ast.CompoundStmt {
 	defer self.trace("")()
 	defer self.handlePanic(lexer.RBRACE)
 
 	var scope = self.PushScope()
 	defer func() { self.PopScope() }()
-	var compound = &CompoundStmt{Node: Node{self.ctx}, Scope: scope}
+	var compound = &ast.CompoundStmt{Node: ast.Node{self.ctx}, Scope: scope}
 	scope.Owner = compound
 
 	self.match(lexer.LBRACE)
@@ -1005,13 +985,13 @@ func (self *Parser) parseCompoundStmt() *CompoundStmt {
 	return compound
 }
 
-func (self *Parser) parseStatement() Statement {
+func (self *Parser) parseStatement() ast.Statement {
 	defer self.trace("")()
 	defer self.handlePanic(lexer.SEMICOLON)
 
 	tok := self.peek(0)
 
-	var stmt Statement
+	var stmt ast.Statement
 	// all normal statements
 
 	// else
@@ -1043,7 +1023,7 @@ func (self *Parser) parseStatement() Statement {
 			stmt = self.parseReturnStatement()
 
 		default:
-			if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
+			if ast.IsStorageClass(tok) || ast.IsTypeQualifier(tok) || ast.IsTypeSpecifier(tok) {
 				stmt = self.parseDeclStatement()
 			}
 		}
@@ -1070,10 +1050,10 @@ func (self *Parser) parseStatement() Statement {
 	return stmt
 }
 
-func (self *Parser) parseIfStatement() *IfStmt {
+func (self *Parser) parseIfStatement() *ast.IfStmt {
 	defer self.trace("")()
 
-	var ifStmt = &IfStmt{Node: Node{self.ctx}}
+	var ifStmt = &ast.IfStmt{Node: ast.Node{self.ctx}}
 	self.next() // eat if
 	self.match(lexer.LPAREN)
 	ifStmt.Cond = self.parseExpression(0)
@@ -1086,10 +1066,10 @@ func (self *Parser) parseIfStatement() *IfStmt {
 
 	return ifStmt
 }
-func (self *Parser) parseSwitchStatement() *SwitchStmt {
+func (self *Parser) parseSwitchStatement() *ast.SwitchStmt {
 	defer self.trace("")()
 
-	var switchStmt = &SwitchStmt{Node: Node{self.ctx}}
+	var switchStmt = &ast.SwitchStmt{Node: ast.Node{self.ctx}}
 	self.next()
 	self.match(lexer.LPAREN)
 	switchStmt.Cond = self.parseExpression(0)
@@ -1099,7 +1079,7 @@ func (self *Parser) parseSwitchStatement() *SwitchStmt {
 	return switchStmt
 }
 
-func (self *Parser) tolerableParse(rule func() Ast, follow ...lexer.Token) (retVal Ast) {
+func (self *Parser) tolerableParse(rule func() ast.Ast, follow ...lexer.Token) (retVal ast.Ast) {
 	defer self.trace("")()
 	defer func() {
 		if p := recover(); p != nil {
@@ -1133,11 +1113,11 @@ func (self *Parser) mayIgnore(exp lexer.Kind) bool {
 	}
 }
 
-func (self *Parser) parseDoStatement() *DoStmt {
+func (self *Parser) parseDoStatement() *ast.DoStmt {
 	defer self.trace("")()
 
 	var (
-		doStmt = &DoStmt{Node: Node{self.ctx}}
+		doStmt = &ast.DoStmt{Node: ast.Node{self.ctx}}
 		tok    lexer.Token
 	)
 
@@ -1154,11 +1134,11 @@ func (self *Parser) parseDoStatement() *DoStmt {
 	return doStmt
 }
 
-func (self *Parser) parseWhileStatement() *WhileStmt {
+func (self *Parser) parseWhileStatement() *ast.WhileStmt {
 	defer self.trace("")()
 
 	var (
-		whileStmt = &WhileStmt{Node: Node{self.ctx}}
+		whileStmt = &ast.WhileStmt{Node: ast.Node{self.ctx}}
 	)
 
 	self.next()
@@ -1170,10 +1150,10 @@ func (self *Parser) parseWhileStatement() *WhileStmt {
 	return whileStmt
 }
 
-func (self *Parser) parseLabelStatement() *LabelStmt {
+func (self *Parser) parseLabelStatement() *ast.LabelStmt {
 	defer self.trace("")()
 
-	var labelStmt = &LabelStmt{Node: Node{self.ctx}}
+	var labelStmt = &ast.LabelStmt{Node: ast.Node{self.ctx}}
 
 	tok := self.next()
 	if tok.Kind != lexer.IDENTIFIER {
@@ -1185,10 +1165,10 @@ func (self *Parser) parseLabelStatement() *LabelStmt {
 	return labelStmt
 }
 
-func (self *Parser) parseGotoStatement() *GotoStmt {
+func (self *Parser) parseGotoStatement() *ast.GotoStmt {
 	defer self.trace("")()
 
-	var gotoStmt = &GotoStmt{Node: Node{self.ctx}}
+	var gotoStmt = &ast.GotoStmt{Node: ast.Node{self.ctx}}
 
 	self.next()
 	tok := self.next()
@@ -1200,10 +1180,10 @@ func (self *Parser) parseGotoStatement() *GotoStmt {
 	return gotoStmt
 }
 
-func (self *Parser) parseContinueStatement() *ContinueStmt {
+func (self *Parser) parseContinueStatement() *ast.ContinueStmt {
 	defer self.trace("")()
 
-	var continueStmt = &ContinueStmt{Node: Node{self.ctx}}
+	var continueStmt = &ast.ContinueStmt{Node: ast.Node{self.ctx}}
 
 	self.next()
 	self.mayIgnore(lexer.SEMICOLON)
@@ -1211,10 +1191,10 @@ func (self *Parser) parseContinueStatement() *ContinueStmt {
 	return continueStmt
 }
 
-func (self *Parser) parseBreakStatement() *BreakStmt {
+func (self *Parser) parseBreakStatement() *ast.BreakStmt {
 	defer self.trace("")()
 
-	var breakStmt = &BreakStmt{Node: Node{self.ctx}}
+	var breakStmt = &ast.BreakStmt{Node: ast.Node{self.ctx}}
 
 	self.next()
 	self.mayIgnore(lexer.SEMICOLON)
@@ -1222,10 +1202,10 @@ func (self *Parser) parseBreakStatement() *BreakStmt {
 	return breakStmt
 }
 
-func (self *Parser) parseReturnStatement() *ReturnStmt {
+func (self *Parser) parseReturnStatement() *ast.ReturnStmt {
 	defer self.trace("")()
 
-	var returnStmt = &ReturnStmt{Node: Node{self.ctx}}
+	var returnStmt = &ast.ReturnStmt{Node: ast.Node{self.ctx}}
 
 	self.next()
 	if self.peek(0).Kind != lexer.SEMICOLON {
@@ -1237,11 +1217,11 @@ func (self *Parser) parseReturnStatement() *ReturnStmt {
 }
 
 // there are two kinds of for ...
-func (self *Parser) parseForStatement() *ForStmt {
+func (self *Parser) parseForStatement() *ast.ForStmt {
 	defer self.trace("")()
 
 	var (
-		forStmt  = &ForStmt{Node: Node{self.ctx}}
+		forStmt  = &ast.ForStmt{Node: ast.Node{self.ctx}}
 		tok      lexer.Token
 		newScope bool = false
 	)
@@ -1258,7 +1238,7 @@ func (self *Parser) parseForStatement() *ForStmt {
 	//FIXME: only auto/static is allowed storage class here
 	//FIXME: so struct decl itself is not auto or static
 	tok = self.peek(0)
-	if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
+	if ast.IsStorageClass(tok) || ast.IsTypeQualifier(tok) || ast.IsTypeSpecifier(tok) {
 		util.Println("parse decl in for")
 		forStmt.Scope = self.PushScope()
 		newScope = true
@@ -1279,10 +1259,10 @@ func (self *Parser) parseForStatement() *ForStmt {
 	return forStmt
 }
 
-func (self *Parser) parseCaseStatement() *CaseStmt {
+func (self *Parser) parseCaseStatement() *ast.CaseStmt {
 	defer self.trace("")()
 
-	var caseStmt = &CaseStmt{Node: Node{self.ctx}}
+	var caseStmt = &ast.CaseStmt{Node: ast.Node{self.ctx}}
 	self.next()
 	caseStmt.ConstExpr = self.parseExpression(0)
 	self.match(lexer.COLON)
@@ -1291,10 +1271,10 @@ func (self *Parser) parseCaseStatement() *CaseStmt {
 	return caseStmt
 }
 
-func (self *Parser) parseDefaultStatement() *DefaultStmt {
+func (self *Parser) parseDefaultStatement() *ast.DefaultStmt {
 	defer self.trace("")()
 
-	var defaultStmt = &DefaultStmt{Node: Node{self.ctx}}
+	var defaultStmt = &ast.DefaultStmt{Node: ast.Node{self.ctx}}
 	self.next()
 	self.match(lexer.COLON)
 	defaultStmt.Stmt = self.parseStatement()
@@ -1302,10 +1282,10 @@ func (self *Parser) parseDefaultStatement() *DefaultStmt {
 	return defaultStmt
 }
 
-func (self *Parser) parseDeclStatement() *DeclStmt {
+func (self *Parser) parseDeclStatement() *ast.DeclStmt {
 	defer self.trace("")()
 
-	var declStmt = &DeclStmt{Node: Node{self.ctx}}
+	var declStmt = &ast.DeclStmt{Node: ast.Node{self.ctx}}
 	var prevParent = self.effectiveParent
 	self.effectiveParent = declStmt
 
@@ -1313,7 +1293,7 @@ func (self *Parser) parseDeclStatement() *DeclStmt {
 		self.effectiveParent = prevParent
 	}()
 
-	var tmpl = &Symbol{}
+	var tmpl = &ast.Symbol{}
 	self.parseTypeDecl(tmpl)
 	for {
 		if self.peek(0).Kind == lexer.SEMICOLON {
@@ -1325,14 +1305,14 @@ func (self *Parser) parseDeclStatement() *DeclStmt {
 			break
 		} else {
 			switch decl.(type) {
-			case *TypedefDecl:
-				declStmt.TypedefDecls = append(declStmt.TypedefDecls, decl.(*TypedefDecl))
+			case *ast.TypedefDecl:
+				declStmt.TypedefDecls = append(declStmt.TypedefDecls, decl.(*ast.TypedefDecl))
 				util.Printf("parsed %v", decl.Repr())
-			case *VariableDecl:
-				declStmt.Decls = append(declStmt.Decls, decl.(*VariableDecl))
+			case *ast.VariableDecl:
+				declStmt.Decls = append(declStmt.Decls, decl.(*ast.VariableDecl))
 				util.Printf("parsed %v", decl.Repr())
-			case *RecordDecl:
-				declStmt.RecordDecls = append(declStmt.RecordDecls, decl.(*RecordDecl))
+			case *ast.RecordDecl:
+				declStmt.RecordDecls = append(declStmt.RecordDecls, decl.(*ast.RecordDecl))
 				util.Printf("parsed %v", decl.Repr())
 
 			default:
@@ -1348,12 +1328,12 @@ func (self *Parser) parseDeclStatement() *DeclStmt {
 	return declStmt
 }
 
-func (self *Parser) parseExprStatement() (ret *ExprStmt) {
+func (self *Parser) parseExprStatement() (ret *ast.ExprStmt) {
 	defer self.trace("")()
 
-	var exprStmt = &ExprStmt{Node: Node{self.ctx}}
+	var exprStmt = &ast.ExprStmt{Node: ast.Node{self.ctx}}
 
-	exprStmt.Expr = self.tolerableParse(func() Ast {
+	exprStmt.Expr = self.tolerableParse(func() ast.Ast {
 		return self.parseExpression(0)
 	}, lexer.MakeToken(lexer.SEMICOLON, ";"))
 	self.mayIgnore(lexer.SEMICOLON)
@@ -1389,8 +1369,8 @@ type operation struct {
 	Associativity
 	NudPred int
 	LedPred int
-	nud     func(p *Parser, op *operation) Expression
-	led     func(p *Parser, lhs Expression, op *operation) Expression
+	nud     func(p *Parser, op *operation) ast.Expression
+	led     func(p *Parser, lhs ast.Expression, op *operation) ast.Expression
 }
 
 // operation templates
@@ -1411,32 +1391,32 @@ func (self *Parser) newOperation(tok lexer.Token) *operation {
 
 // for binary op
 // handle comma carefully
-func binop_led(p *Parser, lhs Expression, op *operation) Expression {
+func binop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 
 	p.next() // eat op
 	rhs := p.parseExpression(op.LedPred)
 
-	var expr = &BinaryOperation{Node{p.ctx}, op.Token.Kind, lhs, rhs}
+	var expr = &ast.BinaryOperation{ast.Node{p.ctx}, op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
 	return expr
 }
 
-func assign_led(p *Parser, lhs Expression, op *operation) Expression {
+func assign_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 
 	p.next() // eat op
 	rhs := p.parseExpression(op.LedPred)
 
-	var expr = &CompoundAssignExpr{Node{p.ctx}, op.Token.Kind, lhs, rhs}
+	var expr = &ast.CompoundAssignExpr{ast.Node{p.ctx}, op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
 	return expr
 }
 
 // ?:
-func condop_led(p *Parser, lhs Expression, op *operation) Expression {
+func condop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
-	var expr = &ConditionalOperation{Node: Node{p.ctx}}
+	var expr = &ast.ConditionalOperation{Node: ast.Node{p.ctx}}
 
 	expr.Cond = lhs
 
@@ -1451,17 +1431,17 @@ func condop_led(p *Parser, lhs Expression, op *operation) Expression {
 }
 
 // for unary sizeof
-func sizeof_nud(p *Parser, op *operation) Expression {
+func sizeof_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	if tok := p.next(); tok.AsString() != "sizeof" {
 		p.parseError(tok, "invalid keyword in expression, maybe sizeof ?")
 	}
 
-	e := &SizeofExpr{Node: Node{p.ctx}}
+	e := &ast.SizeofExpr{Node: ast.Node{p.ctx}}
 
 	if tok := p.peek(0); tok.Kind == lexer.LPAREN {
 		follow := p.peek(1)
-		if isStorageClass(follow) || isTypeQualifier(follow) || isTypeSpecifier(follow) {
+		if ast.IsStorageClass(follow) || ast.IsTypeQualifier(follow) || ast.IsTypeSpecifier(follow) {
 			p.match(lexer.LPAREN)
 			e.Type = p.parseTypeExpression()
 			if e.Type == nil {
@@ -1478,38 +1458,38 @@ func sizeof_nud(p *Parser, op *operation) Expression {
 }
 
 // for unary (including prefix)
-func unaryop_nud(p *Parser, op *operation) Expression {
+func unaryop_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
 	var expr = p.parseExpression(op.NudPred)
-	return &UnaryOperation{Node{p.ctx}, op.Kind, false, expr}
+	return &ast.UnaryOperation{ast.Node{p.ctx}, op.Kind, false, expr}
 }
 
 // for postfix
-func unaryop_led(p *Parser, lhs Expression, op *operation) Expression {
+func unaryop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
 
-	return &UnaryOperation{Node{p.ctx}, op.Kind, true, lhs}
+	return &ast.UnaryOperation{ast.Node{p.ctx}, op.Kind, true, lhs}
 }
 
 // e1.e2  e1->e2
-func member_led(p *Parser, lhs Expression, op *operation) Expression {
+func member_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
 
-	var expr = &MemberExpr{Node: Node{p.ctx}}
+	var expr = &ast.MemberExpr{Node: ast.Node{p.ctx}}
 	expr.Target = lhs
 	expr.Member = p.parseExpression(op.LedPred)
 	return expr
 }
 
 // e1[e2]
-func array_led(p *Parser, lhs Expression, op *operation) Expression {
+func array_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.match(lexer.OPEN_BRACKET)
 
-	var expr = &ArraySubscriptExpr{Node: Node{p.ctx}}
+	var expr = &ast.ArraySubscriptExpr{Node: ast.Node{p.ctx}}
 	expr.Target = lhs
 	expr.Sub = p.parseExpression(op.LedPred)
 	p.match(lexer.CLOSE_BRACKET)
@@ -1517,10 +1497,10 @@ func array_led(p *Parser, lhs Expression, op *operation) Expression {
 }
 
 // could be funcall
-func lparen_led(p *Parser, lhs Expression, op *operation) Expression {
+func lparen_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.match(lexer.LPAREN)
-	var expr = &FunctionCall{Node: Node{p.ctx}}
+	var expr = &ast.FunctionCall{Node: ast.Node{p.ctx}}
 	expr.Func = lhs
 	oldpred := operations[lexer.COMMA].LedPred
 
@@ -1546,11 +1526,11 @@ func lparen_led(p *Parser, lhs Expression, op *operation) Expression {
 	return expr
 }
 
-func (self *Parser) parseTypeExpression() SymbolType {
-	var tmpl = &Symbol{}
+func (self *Parser) parseTypeExpression() ast.SymbolType {
+	var tmpl = &ast.Symbol{}
 	self.parseTypeDecl(tmpl)
 	if decl := self.parseDeclarator(tmpl); decl != nil {
-		if vd, ok := decl.(*VariableDecl); ok {
+		if vd, ok := decl.(*ast.VariableDecl); ok {
 			sym := self.LookupSymbol(vd.Sym)
 			return sym.Type
 		}
@@ -1559,11 +1539,11 @@ func (self *Parser) parseTypeExpression() SymbolType {
 	return nil
 }
 
-func (self *Parser) tryParseTypeExpression() SymbolType {
+func (self *Parser) tryParseTypeExpression() ast.SymbolType {
 	defer self.trace("")()
-	var ty SymbolType
+	var ty ast.SymbolType
 	tok := self.peek(0)
-	if isStorageClass(tok) || isTypeQualifier(tok) || isTypeSpecifier(tok) {
+	if ast.IsStorageClass(tok) || ast.IsTypeQualifier(tok) || ast.IsTypeSpecifier(tok) {
 		ty = self.parseTypeExpression()
 		if ty == nil {
 			self.parseError(tok, "invalid type name for casting")
@@ -1574,13 +1554,13 @@ func (self *Parser) tryParseTypeExpression() SymbolType {
 }
 
 // could primary (e), (type){...}, (type)expr
-func lparen_nud(p *Parser, op *operation) Expression {
+func lparen_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	var (
-		cast        *CastExpr
-		compoundLit *CompoundLiteralExpr
-		ty          SymbolType
-		expr        Expression
+		cast        *ast.CastExpr
+		compoundLit *ast.CompoundLiteralExpr
+		ty          ast.SymbolType
+		expr        ast.Expression
 	)
 
 	p.match(lexer.LPAREN)
@@ -1598,12 +1578,12 @@ func lparen_nud(p *Parser, op *operation) Expression {
 		p.match(lexer.RPAREN)
 		// else it is a cast or compoundliteral, and expr should be a type
 		if p.peek(0).Kind == lexer.LBRACE {
-			compoundLit = &CompoundLiteralExpr{Node: Node{p.ctx}}
+			compoundLit = &ast.CompoundLiteralExpr{Node: ast.Node{p.ctx}}
 			compoundLit.Type = ty
 			compoundLit.InitList = p.parseInitializerList()
 			return compoundLit
 		} else {
-			cast = &CastExpr{Node: Node{p.ctx}}
+			cast = &ast.CastExpr{Node: ast.Node{p.ctx}}
 			cast.Type = ty
 			cast.Expr = p.parseExpression(op.NudPred)
 			return cast
@@ -1613,15 +1593,15 @@ func lparen_nud(p *Parser, op *operation) Expression {
 	return nil
 }
 
-func (self *Parser) parseInitializerList() *InitListExpr {
+func (self *Parser) parseInitializerList() *ast.InitListExpr {
 	defer self.trace("")()
 	var (
 		compound = false
-		expr     Expression
-		initList *InitListExpr
+		expr     ast.Expression
+		initList *ast.InitListExpr
 	)
 
-	initList = &InitListExpr{Node: Node{self.ctx}}
+	initList = &ast.InitListExpr{Node: ast.Node{self.ctx}}
 
 	if self.peek(0).Kind == lexer.LBRACE {
 		compound = true
@@ -1637,7 +1617,7 @@ func (self *Parser) parseInitializerList() *InitListExpr {
 			}
 
 			expr = self.parseExpression(0)
-			initList.inits = append(initList.inits, expr)
+			initList.Inits = append(initList.Inits, expr)
 			if self.peek(0).Kind == lexer.COMMA {
 				self.next()
 			}
@@ -1646,7 +1626,7 @@ func (self *Parser) parseInitializerList() *InitListExpr {
 		self.match(lexer.RBRACE)
 	} else {
 		expr = self.parseExpression(0)
-		initList.inits = append(initList.inits, expr)
+		initList.Inits = append(initList.Inits, expr)
 	}
 	operations[lexer.COMMA].LedPred = oldpred
 
@@ -1654,50 +1634,50 @@ func (self *Parser) parseInitializerList() *InitListExpr {
 }
 
 // for initializer
-func brace_nud(p *Parser, op *operation) Expression {
+func brace_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	return p.parseInitializerList()
 }
 
 // end of expr
-func expr_led(p *Parser, lhs Expression, op *operation) Expression {
+func expr_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	return nil
 }
 
 // parse error
-func error_led(p *Parser, lhs Expression, op *operation) Expression {
+func error_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	p.parseError(op.Token, "expect an operator")
 	return nil
 }
 
-func error_nud(p *Parser, op *operation) Expression {
+func error_nud(p *Parser, op *operation) ast.Expression {
 	p.parseError(op.Token, "expect an expression")
 	return nil
 }
 
 // for ID
-func id_nud(p *Parser, op *operation) Expression {
+func id_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
-	return &DeclRefExpr{Node{p.ctx}, op.Token.AsString()}
+	return &ast.DeclRefExpr{ast.Node{p.ctx}, op.Token.AsString()}
 }
 
 // for Literal (int, float, string, char...)
-func literal_nud(p *Parser, op *operation) Expression {
+func literal_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
 	switch op.Kind {
 	case lexer.INT_LITERAL:
-		return &IntLiteralExpr{Node: Node{p.ctx}, Tok: op.Token}
+		return &ast.IntLiteralExpr{Node: ast.Node{p.ctx}, Tok: op.Token}
 	case lexer.STR_LITERAL:
-		return &StringLiteralExpr{Node: Node{p.ctx}, Tok: op.Token}
+		return &ast.StringLiteralExpr{Node: ast.Node{p.ctx}, Tok: op.Token}
 	case lexer.CHAR_LITERAL:
-		return &CharLiteralExpr{Node: Node{p.ctx}, Tok: op.Token}
+		return &ast.CharLiteralExpr{Node: ast.Node{p.ctx}, Tok: op.Token}
 	}
 	return nil
 }
 
-func (self *Parser) parseExpression(rbp int) (ret Expression) {
+func (self *Parser) parseExpression(rbp int) (ret ast.Expression) {
 	defer self.trace("")()
 
 	if self.peek(0).Kind == lexer.SEMICOLON {
@@ -1716,8 +1696,8 @@ func (self *Parser) parseExpression(rbp int) (ret Expression) {
 	return lhs
 }
 
-func (self *Parser) PushScope() *SymbolScope {
-	var scope = &SymbolScope{}
+func (self *Parser) PushScope() *ast.SymbolScope {
+	var scope = &ast.SymbolScope{}
 	scope.Parent = self.currentScope
 	self.currentScope.Children = append(self.currentScope.Children, scope)
 
@@ -1725,8 +1705,8 @@ func (self *Parser) PushScope() *SymbolScope {
 	return scope
 }
 
-func (self *Parser) PopScope() *SymbolScope {
-	if self.currentScope == self.ctx.top {
+func (self *Parser) PopScope() *ast.SymbolScope {
+	if self.currentScope == self.ctx.Top {
 		panic("cannot pop top of the scope chain")
 	}
 
@@ -1735,20 +1715,20 @@ func (self *Parser) PopScope() *SymbolScope {
 	return ret
 }
 
-func (self *Parser) AddSymbol(sym *Symbol) {
+func (self *Parser) AddSymbol(sym *ast.Symbol) {
 	self.currentScope.AddSymbol(sym)
 }
 
 // this is for type symbol name such as struct/enum/union/typedef
-func (self *Parser) AddTypeSymbol(sym *Symbol) {
+func (self *Parser) AddTypeSymbol(sym *ast.Symbol) {
 	var current = self.currentScope
 
 done:
 	for ; current != nil; current = current.Parent {
 		switch current.Owner.(type) {
-		case *CompoundStmt:
+		case *ast.CompoundStmt:
 			break done
-		case *TranslationUnit:
+		case *ast.TranslationUnit:
 			break done
 		}
 	}
@@ -1756,23 +1736,23 @@ done:
 	current.AddSymbol(sym)
 }
 
-func (self *Parser) LookupTypeSymbol(name string) *Symbol {
+func (self *Parser) LookupTypeSymbol(name string) *ast.Symbol {
 	return self.currentScope.LookupSymbol(name, true)
 }
 
-func (self *Parser) LookupSymbol(name string) *Symbol {
+func (self *Parser) LookupSymbol(name string) *ast.Symbol {
 	return self.currentScope.LookupSymbol(name, false)
 }
 
-func (self *Parser) AddUserType(st SymbolType) {
+func (self *Parser) AddUserType(st ast.SymbolType) {
 	var current = self.currentScope
 
 done:
 	for ; current != nil; current = current.Parent {
 		switch current.Owner.(type) {
-		case *CompoundStmt:
+		case *ast.CompoundStmt:
 			break done
-		case *TranslationUnit:
+		case *ast.TranslationUnit:
 			break done
 		}
 	}
@@ -1780,7 +1760,7 @@ done:
 	current.RegisterUserType(st)
 }
 
-func (self *Parser) LookupUserType(name string) SymbolType {
+func (self *Parser) LookupUserType(name string) ast.SymbolType {
 	var current = self.currentScope
 
 	for ; current != nil; current = current.Parent {
@@ -1793,8 +1773,8 @@ func (self *Parser) LookupUserType(name string) SymbolType {
 
 // this is useless, need to trace symbol hierachy from TU
 func (self *Parser) DumpSymbols() {
-	var dumpSymbols func(scope *SymbolScope, level int)
-	dumpSymbols = func(scope *SymbolScope, level int) {
+	var dumpSymbols func(scope *ast.SymbolScope, level int)
+	dumpSymbols = func(scope *ast.SymbolScope, level int) {
 		for _, sym := range scope.Symbols {
 			fmt.Printf("%s%s\n", strings.Repeat(" ", level*2), sym.Name.AsString())
 		}
@@ -1804,70 +1784,70 @@ func (self *Parser) DumpSymbols() {
 		}
 	}
 
-	dumpSymbols(self.ctx.top, 0)
+	dumpSymbols(self.ctx.Top, 0)
 }
 
 func (self *Parser) DumpAst() {
 	var (
 		stack     int = 0
-		scope     *SymbolScope
-		scopes    []*SymbolScope
+		scope     *ast.SymbolScope
+		scopes    []*ast.SymbolScope
 		arraymode bool
 		arraylog  []string
 		clr       int
 	)
 
-	var Pop = func() *SymbolScope {
+	var Pop = func() *ast.SymbolScope {
 		sc := scopes[len(scopes)-1]
 		scopes = scopes[:len(scopes)-1]
 		return sc
 	}
 
-	var Push = func(sc *SymbolScope) {
+	var Push = func(sc *ast.SymbolScope) {
 		scopes = append(scopes, sc)
 		scope = sc
 	}
 
 	var walker = struct {
-		WalkTranslationUnit      func(WalkStage, *TranslationUnit)
-		WalkIntLiteralExpr       func(ws WalkStage, e *IntLiteralExpr) bool
-		WalkCharLiteralExpr      func(ws WalkStage, e *CharLiteralExpr) bool
-		WalkStringLiteralExpr    func(ws WalkStage, e *StringLiteralExpr) bool
-		WalkBinaryOperation      func(ws WalkStage, e *BinaryOperation) bool
-		WalkDeclRefExpr          func(ws WalkStage, e *DeclRefExpr) bool
-		WalkUnaryOperation       func(ws WalkStage, e *UnaryOperation) bool
-		WalkSizeofExpr           func(ws WalkStage, e *SizeofExpr) bool
-		WalkConditionalOperation func(ws WalkStage, e *ConditionalOperation) bool
-		WalkArraySubscriptExpr   func(ws WalkStage, e *ArraySubscriptExpr) bool
-		WalkMemberExpr           func(ws WalkStage, e *MemberExpr) bool
-		WalkFunctionCall         func(ws WalkStage, e *FunctionCall) bool
-		WalkCompoundAssignExpr   func(ws WalkStage, e *CompoundAssignExpr) bool
-		WalkCastExpr             func(ws WalkStage, e *CastExpr) bool
-		WalkCompoundLiteralExpr  func(ws WalkStage, e *CompoundLiteralExpr) bool
-		WalkInitListExpr         func(ws WalkStage, e *InitListExpr) bool
-		WalkFieldDecl            func(ws WalkStage, e *FieldDecl)
-		WalkRecordDecl           func(ws WalkStage, e *RecordDecl)
-		WalkEnumeratorDecl       func(ws WalkStage, e *EnumeratorDecl)
-		WalkEnumDecl             func(ws WalkStage, e *EnumDecl)
-		WalkVariableDecl         func(ws WalkStage, e *VariableDecl)
-		WalkTypedefDecl          func(ws WalkStage, e *TypedefDecl)
-		WalkParamDecl            func(ws WalkStage, e *ParamDecl)
-		WalkFunctionDecl         func(ws WalkStage, e *FunctionDecl)
-		WalkExprStmt             func(ws WalkStage, e *ExprStmt)
-		WalkLabelStmt            func(ws WalkStage, e *LabelStmt)
-		WalkCaseStmt             func(ws WalkStage, e *CaseStmt)
-		WalkDefaultStmt          func(ws WalkStage, e *DefaultStmt)
-		WalkReturnStmt           func(ws WalkStage, e *ReturnStmt)
-		WalkIfStmt               func(ws WalkStage, e *IfStmt)
-		WalkSwitchStmt           func(ws WalkStage, e *SwitchStmt)
-		WalkWhileStmt            func(ws WalkStage, e *WhileStmt)
-		WalkDoStmt               func(ws WalkStage, e *DoStmt)
-		WalkDeclStmt             func(ws WalkStage, e *DeclStmt)
-		WalkForStmt              func(ws WalkStage, e *ForStmt)
-		WalkGotoStmt             func(ws WalkStage, e *GotoStmt)
-		WalkContinueStmt         func(ws WalkStage, e *ContinueStmt)
-		WalkBreakStmt            func(ws WalkStage, e *BreakStmt)
-		WalkCompoundStmt         func(ws WalkStage, e *CompoundStmt)
+		WalkTranslationUnit      func(ast.WalkStage, *ast.TranslationUnit)
+		WalkIntLiteralExpr       func(ws ast.WalkStage, e *ast.IntLiteralExpr) bool
+		WalkCharLiteralExpr      func(ws ast.WalkStage, e *ast.CharLiteralExpr) bool
+		WalkStringLiteralExpr    func(ws ast.WalkStage, e *ast.StringLiteralExpr) bool
+		WalkBinaryOperation      func(ws ast.WalkStage, e *ast.BinaryOperation) bool
+		WalkDeclRefExpr          func(ws ast.WalkStage, e *ast.DeclRefExpr) bool
+		WalkUnaryOperation       func(ws ast.WalkStage, e *ast.UnaryOperation) bool
+		WalkSizeofExpr           func(ws ast.WalkStage, e *ast.SizeofExpr) bool
+		WalkConditionalOperation func(ws ast.WalkStage, e *ast.ConditionalOperation) bool
+		WalkArraySubscriptExpr   func(ws ast.WalkStage, e *ast.ArraySubscriptExpr) bool
+		WalkMemberExpr           func(ws ast.WalkStage, e *ast.MemberExpr) bool
+		WalkFunctionCall         func(ws ast.WalkStage, e *ast.FunctionCall) bool
+		WalkCompoundAssignExpr   func(ws ast.WalkStage, e *ast.CompoundAssignExpr) bool
+		WalkCastExpr             func(ws ast.WalkStage, e *ast.CastExpr) bool
+		WalkCompoundLiteralExpr  func(ws ast.WalkStage, e *ast.CompoundLiteralExpr) bool
+		WalkInitListExpr         func(ws ast.WalkStage, e *ast.InitListExpr) bool
+		WalkFieldDecl            func(ws ast.WalkStage, e *ast.FieldDecl)
+		WalkRecordDecl           func(ws ast.WalkStage, e *ast.RecordDecl)
+		WalkEnumeratorDecl       func(ws ast.WalkStage, e *ast.EnumeratorDecl)
+		WalkEnumDecl             func(ws ast.WalkStage, e *ast.EnumDecl)
+		WalkVariableDecl         func(ws ast.WalkStage, e *ast.VariableDecl)
+		WalkTypedefDecl          func(ws ast.WalkStage, e *ast.TypedefDecl)
+		WalkParamDecl            func(ws ast.WalkStage, e *ast.ParamDecl)
+		WalkFunctionDecl         func(ws ast.WalkStage, e *ast.FunctionDecl)
+		WalkExprStmt             func(ws ast.WalkStage, e *ast.ExprStmt)
+		WalkLabelStmt            func(ws ast.WalkStage, e *ast.LabelStmt)
+		WalkCaseStmt             func(ws ast.WalkStage, e *ast.CaseStmt)
+		WalkDefaultStmt          func(ws ast.WalkStage, e *ast.DefaultStmt)
+		WalkReturnStmt           func(ws ast.WalkStage, e *ast.ReturnStmt)
+		WalkIfStmt               func(ws ast.WalkStage, e *ast.IfStmt)
+		WalkSwitchStmt           func(ws ast.WalkStage, e *ast.SwitchStmt)
+		WalkWhileStmt            func(ws ast.WalkStage, e *ast.WhileStmt)
+		WalkDoStmt               func(ws ast.WalkStage, e *ast.DoStmt)
+		WalkDeclStmt             func(ws ast.WalkStage, e *ast.DeclStmt)
+		WalkForStmt              func(ws ast.WalkStage, e *ast.ForStmt)
+		WalkGotoStmt             func(ws ast.WalkStage, e *ast.GotoStmt)
+		WalkContinueStmt         func(ws ast.WalkStage, e *ast.ContinueStmt)
+		WalkBreakStmt            func(ws ast.WalkStage, e *ast.BreakStmt)
+		WalkCompoundStmt         func(ws ast.WalkStage, e *ast.CompoundStmt)
 	}{}
 
 	var log = func(msg string) {
@@ -1881,18 +1861,18 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	walker.WalkTranslationUnit = func(ws WalkStage, tu *TranslationUnit) {
-		if ws == WalkerPropagate {
-			scope = self.ctx.top
-			log("TranslationUnit")
+	walker.WalkTranslationUnit = func(ws ast.WalkStage, tu *ast.TranslationUnit) {
+		if ws == ast.WalkerPropagate {
+			scope = self.ctx.Top
+			log("ast.TranslationUnit")
 			stack++
 		} else {
 			stack--
 		}
 	}
 
-	walker.WalkIntLiteralExpr = func(ws WalkStage, e *IntLiteralExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkIntLiteralExpr = func(ws ast.WalkStage, e *ast.IntLiteralExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Tok.AsString())
 				return false
@@ -1903,8 +1883,8 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkCharLiteralExpr = func(ws WalkStage, e *CharLiteralExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkCharLiteralExpr = func(ws ast.WalkStage, e *ast.CharLiteralExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Tok.AsString())
 				return false
@@ -1914,8 +1894,8 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkStringLiteralExpr = func(ws WalkStage, e *StringLiteralExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkStringLiteralExpr = func(ws ast.WalkStage, e *ast.StringLiteralExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Tok.AsString())
 				return false
@@ -1926,12 +1906,12 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkBinaryOperation = func(ws WalkStage, e *BinaryOperation) bool {
-		if ws == WalkerPropagate {
+	walker.WalkBinaryOperation = func(ws ast.WalkStage, e *ast.BinaryOperation) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
-				WalkAst(e.LHS, walker)
+				ast.WalkAst(e.LHS, walker)
 				arraylog = append(arraylog, lexer.TokKinds[e.Op])
-				WalkAst(e.RHS, walker)
+				ast.WalkAst(e.RHS, walker)
 				return false
 
 			} else {
@@ -1945,8 +1925,8 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkDeclRefExpr = func(ws WalkStage, e *DeclRefExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, e.Name)
 				return false
@@ -1957,22 +1937,22 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkSizeofExpr = func(ws WalkStage, e *SizeofExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkSizeofExpr = func(ws ast.WalkStage, e *ast.SizeofExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, "sizeof ")
 				if e.Type != nil {
 					arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
 				} else {
-					WalkAst(e.Expr, walker)
+					ast.WalkAst(e.Expr, walker)
 				}
 				return false
 			}
 
 			if e.Type == nil {
-				log("SizeofExpr")
+				log("ast.SizeofExpr")
 			} else {
-				log(fmt.Sprintf("SizeofExpr(%v)", e.Type))
+				log(fmt.Sprintf("ast.SizeofExpr(%v)", e.Type))
 			}
 			stack++
 		} else {
@@ -1980,16 +1960,16 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkUnaryOperation = func(ws WalkStage, e *UnaryOperation) bool {
-		if ws == WalkerPropagate {
+	walker.WalkUnaryOperation = func(ws ast.WalkStage, e *ast.UnaryOperation) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				if e.Postfix {
-					WalkAst(e.Expr, walker)
+					ast.WalkAst(e.Expr, walker)
 					arraylog = append(arraylog, lexer.TokKinds[e.Op])
 				} else {
 					arraylog = append(arraylog, "(")
 					arraylog = append(arraylog, lexer.TokKinds[e.Op])
-					WalkAst(e.Expr, walker)
+					ast.WalkAst(e.Expr, walker)
 					arraylog = append(arraylog, ")")
 				}
 				return false
@@ -2008,17 +1988,17 @@ func (self *Parser) DumpAst() {
 		}
 		return true
 	}
-	walker.WalkConditionalOperation = func(ws WalkStage, e *ConditionalOperation) bool {
-		if ws == WalkerPropagate {
+	walker.WalkConditionalOperation = func(ws ast.WalkStage, e *ast.ConditionalOperation) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
-				WalkAst(e.Cond, walker)
+				ast.WalkAst(e.Cond, walker)
 				arraylog = append(arraylog, "?")
-				WalkAst(e.True, walker)
+				ast.WalkAst(e.True, walker)
 				arraylog = append(arraylog, ":")
-				WalkAst(e.False, walker)
+				ast.WalkAst(e.False, walker)
 				return false
 			}
-			log("ConditionalOperation")
+			log("ast.ConditionalOperation")
 			stack++
 		} else {
 			stack--
@@ -2026,16 +2006,16 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkArraySubscriptExpr = func(ws WalkStage, e *ArraySubscriptExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkArraySubscriptExpr = func(ws ast.WalkStage, e *ast.ArraySubscriptExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if !arraymode {
-				log("ArraySubscriptExpr")
+				log("ast.ArraySubscriptExpr")
 			} else {
 				//arraylog = append(arraylog, "(")
-				WalkAst(e.Target, walker)
+				ast.WalkAst(e.Target, walker)
 				//arraylog = append(arraylog, ")")
 				arraylog = append(arraylog, "[")
-				WalkAst(e.Sub, walker)
+				ast.WalkAst(e.Sub, walker)
 				arraylog = append(arraylog, "]")
 				return false
 			}
@@ -2046,47 +2026,47 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkMemberExpr = func(ws WalkStage, e *MemberExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkMemberExpr = func(ws ast.WalkStage, e *ast.MemberExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
-				WalkAst(e.Target, walker)
+				ast.WalkAst(e.Target, walker)
 				arraylog = append(arraylog, ".")
-				WalkAst(e.Member, walker)
+				ast.WalkAst(e.Member, walker)
 				return false
 			}
 
-			log("MemberExpr")
+			log("ast.MemberExpr")
 			stack++
 		} else {
 			stack--
 		}
 		return true
 	}
-	walker.WalkFunctionCall = func(ws WalkStage, e *FunctionCall) bool {
-		if ws == WalkerPropagate {
+	walker.WalkFunctionCall = func(ws ast.WalkStage, e *ast.FunctionCall) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
-				WalkAst(e.Func, walker)
+				ast.WalkAst(e.Func, walker)
 				arraylog = append(arraylog, "(")
 				for _, a := range e.Args {
-					WalkAst(a, walker)
+					ast.WalkAst(a, walker)
 				}
 				arraylog = append(arraylog, ")")
 
 				return false
 			}
-			log("FunctionCall")
+			log("ast.FunctionCall")
 			stack++
 		} else {
 			stack--
 		}
 		return true
 	}
-	walker.WalkCompoundAssignExpr = func(ws WalkStage, e *CompoundAssignExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkCompoundAssignExpr = func(ws ast.WalkStage, e *ast.CompoundAssignExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
-				WalkAst(e.LHS, walker)
+				ast.WalkAst(e.LHS, walker)
 				arraylog = append(arraylog, lexer.TokKinds[e.Op])
-				WalkAst(e.RHS, walker)
+				ast.WalkAst(e.RHS, walker)
 				return false
 			}
 			var ty = reflect.TypeOf(e).Elem()
@@ -2098,28 +2078,28 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkCastExpr = func(ws WalkStage, e *CastExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkCastExpr = func(ws ast.WalkStage, e *ast.CastExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
-				WalkAst(e.Expr, walker)
+				ast.WalkAst(e.Expr, walker)
 				return false
 			}
-			log(fmt.Sprintf("CastExpr(%s)", e.Type))
+			log(fmt.Sprintf("ast.CastExpr(%s)", e.Type))
 			stack++
 		} else {
 			stack--
 		}
 		return true
 	}
-	walker.WalkCompoundLiteralExpr = func(ws WalkStage, e *CompoundLiteralExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkCompoundLiteralExpr = func(ws ast.WalkStage, e *ast.CompoundLiteralExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, fmt.Sprintf("(%s)", e.Type))
-				WalkAst(e.InitList, walker)
+				ast.WalkAst(e.InitList, walker)
 				return false
 			}
-			log(fmt.Sprintf("CompoundLiteralExpr(%s)", e.Type))
+			log(fmt.Sprintf("ast.CompoundLiteralExpr(%s)", e.Type))
 			stack++
 		} else {
 			stack--
@@ -2127,53 +2107,53 @@ func (self *Parser) DumpAst() {
 		return true
 	}
 
-	walker.WalkBreakStmt = func(ws WalkStage, e *BreakStmt) {
-		if ws == WalkerPropagate {
-			log("BreakStmt")
+	walker.WalkBreakStmt = func(ws ast.WalkStage, e *ast.BreakStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.BreakStmt")
 		}
 	}
 
-	walker.WalkContinueStmt = func(ws WalkStage, e *ContinueStmt) {
-		if ws == WalkerPropagate {
-			log("ContinueStmt")
+	walker.WalkContinueStmt = func(ws ast.WalkStage, e *ast.ContinueStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.ContinueStmt")
 		}
 	}
 
-	walker.WalkInitListExpr = func(ws WalkStage, e *InitListExpr) bool {
-		if ws == WalkerPropagate {
+	walker.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr) bool {
+		if ws == ast.WalkerPropagate {
 			if arraymode {
 				arraylog = append(arraylog, "{")
-				for _, e2 := range e.inits {
-					WalkAst(e2, walker)
+				for _, e2 := range e.Inits {
+					ast.WalkAst(e2, walker)
 				}
 				arraylog = append(arraylog, "}")
 				return false
 			}
-			log("InitListExpr")
+			log("ast.InitListExpr")
 			stack++
 		} else {
 			stack--
 		}
 		return true
 	}
-	walker.WalkFieldDecl = func(ws WalkStage, e *FieldDecl) {
-		if ws == WalkerPropagate {
-			log(fmt.Sprintf("FieldDecl(%s)", e.Sym))
+	walker.WalkFieldDecl = func(ws ast.WalkStage, e *ast.FieldDecl) {
+		if ws == ast.WalkerPropagate {
+			log(fmt.Sprintf("ast.FieldDecl(%s)", e.Sym))
 		}
 	}
-	walker.WalkRecordDecl = func(ws WalkStage, e *RecordDecl) {
-		if ws == WalkerPropagate {
+	walker.WalkRecordDecl = func(ws ast.WalkStage, e *ast.RecordDecl) {
+		if ws == ast.WalkerPropagate {
 			sym := scope.LookupSymbol(e.Sym, true)
 
 			ty := "struct"
-			if sym.Type.(*RecordType).Union {
+			if sym.Type.(*ast.RecordType).Union {
 				ty = "union"
 			}
 
 			if e.Prev != nil {
-				log(fmt.Sprintf("RecordDecl(%s %s prev %p)", ty, e.Sym, e.Prev))
+				log(fmt.Sprintf("ast.RecordDecl(%s %s prev %p)", ty, e.Sym, e.Prev))
 			} else {
-				log(fmt.Sprintf("RecordDecl(%s %s)", ty, e.Sym))
+				log(fmt.Sprintf("ast.RecordDecl(%s %s)", ty, e.Sym))
 			}
 			stack++
 
@@ -2183,41 +2163,41 @@ func (self *Parser) DumpAst() {
 			scope = Pop()
 		}
 	}
-	walker.WalkEnumeratorDecl = func(ws WalkStage, e *EnumeratorDecl) {
-		if ws == WalkerPropagate {
+	walker.WalkEnumeratorDecl = func(ws ast.WalkStage, e *ast.EnumeratorDecl) {
+		if ws == ast.WalkerPropagate {
 			log(fmt.Sprintf("Enumerator(%s)", e.Sym))
 			stack++
 		} else {
 			stack--
 		}
 	}
-	walker.WalkEnumDecl = func(ws WalkStage, e *EnumDecl) {
-		if ws == WalkerPropagate {
-			log(fmt.Sprintf("EnumDecl(%s prev %p)", e.Sym, e.Prev))
+	walker.WalkEnumDecl = func(ws ast.WalkStage, e *ast.EnumDecl) {
+		if ws == ast.WalkerPropagate {
+			log(fmt.Sprintf("ast.EnumDecl(%s prev %p)", e.Sym, e.Prev))
 			stack++
 
 		} else {
 			stack--
 		}
 	}
-	walker.WalkTypedefDecl = func(ws WalkStage, e *TypedefDecl) {
-		if ws == WalkerPropagate {
+	walker.WalkTypedefDecl = func(ws ast.WalkStage, e *ast.TypedefDecl) {
+		if ws == ast.WalkerPropagate {
 			sym := scope.LookupSymbol(e.Sym, true)
 
-			log(fmt.Sprintf("TypedefDecl(%s)", sym))
+			log(fmt.Sprintf("ast.TypedefDecl(%s)", sym))
 			stack++
 		} else {
 			stack--
 		}
 	}
-	walker.WalkVariableDecl = func(ws WalkStage, e *VariableDecl) {
+	walker.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl) {
 		sym := scope.LookupSymbol(e.Sym, false)
-		if ws == WalkerPropagate {
-			if ty, isArray := sym.Type.(*Array); isArray {
+		if ws == ast.WalkerPropagate {
+			if ty, isArray := sym.Type.(*ast.Array); isArray {
 				arraymode = true
 				for _, expr := range ty.LenExprs {
 					arraylog = append(arraylog, "[")
-					WalkAst(expr, walker)
+					ast.WalkAst(expr, walker)
 					arraylog = append(arraylog, "]")
 				}
 				arraymode = false
@@ -2232,8 +2212,8 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkParamDecl = func(ws WalkStage, e *ParamDecl) {
-		if ws == WalkerPropagate {
+	walker.WalkParamDecl = func(ws ast.WalkStage, e *ast.ParamDecl) {
+		if ws == ast.WalkerPropagate {
 			sym := scope.LookupSymbol(e.Sym, false)
 			ty := reflect.TypeOf(e).Elem()
 			log(fmt.Sprintf("%s(%v)", ty.Name(), sym))
@@ -2242,8 +2222,8 @@ func (self *Parser) DumpAst() {
 			stack--
 		}
 	}
-	walker.WalkFunctionDecl = func(ws WalkStage, e *FunctionDecl) {
-		if ws == WalkerPropagate {
+	walker.WalkFunctionDecl = func(ws ast.WalkStage, e *ast.FunctionDecl) {
+		if ws == ast.WalkerPropagate {
 			sym := scope.LookupSymbol(e.Name, false)
 			log(fmt.Sprintf("FuncDecl(%v)", sym))
 			Push(e.Scope)
@@ -2253,111 +2233,111 @@ func (self *Parser) DumpAst() {
 			scope = Pop()
 		}
 	}
-	walker.WalkExprStmt = func(ws WalkStage, e *ExprStmt) {
-		if ws == WalkerPropagate {
-			log("ExprStmt")
+	walker.WalkExprStmt = func(ws ast.WalkStage, e *ast.ExprStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.ExprStmt")
 			stack++
 		} else {
 			stack--
 		}
 	}
-	walker.WalkLabelStmt = func(ws WalkStage, e *LabelStmt) {
-		if ws == WalkerPropagate {
-			log(fmt.Sprintf("LabelStmt(%s)", e.Label))
-			stack++
-		} else {
-			stack--
-		}
-	}
-
-	walker.WalkCaseStmt = func(ws WalkStage, e *CaseStmt) {
-		if ws == WalkerPropagate {
-			log("CaseStmt")
-			stack++
-		} else {
-			stack--
-		}
-	}
-	walker.WalkDefaultStmt = func(ws WalkStage, e *DefaultStmt) {
-		if ws == WalkerPropagate {
-			log("DefaultStmt")
-			stack++
-		} else {
-			stack--
-		}
-	}
-	walker.WalkReturnStmt = func(ws WalkStage, e *ReturnStmt) {
-		if ws == WalkerPropagate {
-			log("ReturnStmt")
-			stack++
-		} else {
-			stack--
-		}
-	}
-	walker.WalkSwitchStmt = func(ws WalkStage, e *SwitchStmt) {
-		if ws == WalkerPropagate {
-			log("SwitchStmt")
-			stack++
-		} else {
-			stack--
-		}
-	}
-	walker.WalkWhileStmt = func(ws WalkStage, e *WhileStmt) {
-		if ws == WalkerPropagate {
-			log("WhileStmt")
-			stack++
-		} else {
-			stack--
-		}
-	}
-	walker.WalkDoStmt = func(ws WalkStage, e *DoStmt) {
-		if ws == WalkerPropagate {
-			log("DoStmt")
-			stack++
-		} else {
-			stack--
-		}
-	}
-	walker.WalkDeclStmt = func(ws WalkStage, e *DeclStmt) {
-		if ws == WalkerPropagate {
-			log("DeclStmt")
-			stack++
-		} else {
-			stack--
-		}
-	}
-	walker.WalkIfStmt = func(ws WalkStage, e *IfStmt) {
-		if ws == WalkerPropagate {
-			log("IfStmt")
+	walker.WalkLabelStmt = func(ws ast.WalkStage, e *ast.LabelStmt) {
+		if ws == ast.WalkerPropagate {
+			log(fmt.Sprintf("ast.LabelStmt(%s)", e.Label))
 			stack++
 		} else {
 			stack--
 		}
 	}
 
-	walker.WalkGotoStmt = func(ws WalkStage, e *GotoStmt) {
-		if ws == WalkerPropagate {
+	walker.WalkCaseStmt = func(ws ast.WalkStage, e *ast.CaseStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.CaseStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkDefaultStmt = func(ws ast.WalkStage, e *ast.DefaultStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.DefaultStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkReturnStmt = func(ws ast.WalkStage, e *ast.ReturnStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.ReturnStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkSwitchStmt = func(ws ast.WalkStage, e *ast.SwitchStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.SwitchStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkWhileStmt = func(ws ast.WalkStage, e *ast.WhileStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.WhileStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkDoStmt = func(ws ast.WalkStage, e *ast.DoStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.DoStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkDeclStmt = func(ws ast.WalkStage, e *ast.DeclStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.DeclStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+	walker.WalkIfStmt = func(ws ast.WalkStage, e *ast.IfStmt) {
+		if ws == ast.WalkerPropagate {
+			log("ast.IfStmt")
+			stack++
+		} else {
+			stack--
+		}
+	}
+
+	walker.WalkGotoStmt = func(ws ast.WalkStage, e *ast.GotoStmt) {
+		if ws == ast.WalkerPropagate {
 			log(fmt.Sprintf("Goto(%s)", e.Label))
 			stack++
 		} else {
 			stack--
 		}
 	}
-	walker.WalkForStmt = func(ws WalkStage, e *ForStmt) {
-		if ws == WalkerPropagate {
+	walker.WalkForStmt = func(ws ast.WalkStage, e *ast.ForStmt) {
+		if ws == ast.WalkerPropagate {
 
 			Push(e.Scope)
-			log("ForStmt")
+			log("ast.ForStmt")
 			stack++
 		} else {
 			stack--
 			scope = Pop()
 		}
 	}
-	walker.WalkCompoundStmt = func(ws WalkStage, e *CompoundStmt) {
-		if ws == WalkerPropagate {
+	walker.WalkCompoundStmt = func(ws ast.WalkStage, e *ast.CompoundStmt) {
+		if ws == ast.WalkerPropagate {
 			Push(e.Scope)
-			log("CompoundStmt")
+			log("ast.CompoundStmt")
 			stack++
 		} else {
 			stack--
@@ -2365,7 +2345,7 @@ func (self *Parser) DumpAst() {
 		}
 	}
 
-	WalkAst(self.tu, walker)
+	ast.WalkAst(self.tu, walker)
 }
 
 func (self *Parser) handlePanic(kd lexer.Kind) {
@@ -2401,24 +2381,6 @@ func (self *Parser) trace(msg string) func() {
 }
 
 func init() {
-	storages = make(map[string]Storage)
-	storages["auto"] = Auto
-	storages["static"] = Static
-	storages["extern"] = External
-	storages["register"] = Register
-	storages["typedef"] = Typedef
-
-	typeSpecifier = make(map[string]bool)
-	var ts = [...]string{"void", "char", "short", "int", "long", "float",
-		"double", "signed", "unsigned", "struct", "union", "enum"}
-	for _, v := range ts {
-		typeSpecifier[v] = true
-	}
-
-	typeQualifier = make(map[string]Qualifier)
-	typeQualifier["const"] = Const
-	typeQualifier["restrict"] = Restrict
-	typeQualifier["volatile"] = Volatile
 
 	operations = make(map[lexer.Kind]*operation)
 

@@ -2,12 +2,13 @@ package parser
 
 import (
 	"flag"
+	a "github.com/sonald/sc/ast"
 	"os"
 	"strings"
 	"testing"
 )
 
-func testTemplate(t *testing.T, text string) Ast {
+func testTemplate(t *testing.T, text string) a.Ast {
 	opts := ParseOption{
 		Filename: "./test.txt",
 		Verbose:  true,
@@ -73,18 +74,18 @@ extern int logE(void);
 void signal(int signo, ...);
 `
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.funcDecls == nil || len(tu.funcDecls) != 3 {
+		if tu.FuncDecls == nil || len(tu.FuncDecls) != 3 {
 			t.Errorf("failed to parse func decl")
 		}
 
-		if tu.recordDecls == nil || len(tu.recordDecls) != 3 {
+		if tu.RecordDecls == nil || len(tu.RecordDecls) != 3 {
 			t.Errorf("failed to parse some records")
 		}
 
-		if tu.varDecls == nil || len(tu.varDecls) != 15 {
+		if tu.VarDecls == nil || len(tu.VarDecls) != 15 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -120,10 +121,10 @@ struct work {
 char alphas2[alphas[0] + alphas[1]][fp()][sizeof s.payload + s.kind];
 `
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.varDecls == nil || len(tu.varDecls) != 12 {
+		if tu.VarDecls == nil || len(tu.VarDecls) != 12 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -162,16 +163,16 @@ enum Color clr2 = green;
 color_t clr3 = red;
 `
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.typedefDecls == nil || len(tu.typedefDecls) != 8 {
+		if tu.TypedefDecls == nil || len(tu.TypedefDecls) != 8 {
 			t.Errorf("failed to parse some typedefs")
 		}
-		if tu.varDecls == nil || len(tu.varDecls) != 7 {
+		if tu.VarDecls == nil || len(tu.VarDecls) != 7 {
 			t.Errorf("failed to parse some vars")
 		}
-		if tu.enumDecls == nil || len(tu.enumDecls) != 2 {
+		if tu.EnumDecls == nil || len(tu.EnumDecls) != 2 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -196,7 +197,7 @@ struct compound {
 //};
 `
 	ast := testTemplate(t, text)
-	if _, ok := ast.(*TranslationUnit); !ok {
+	if _, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	}
 }
@@ -211,18 +212,10 @@ func testParseTypeCasts(t *testing.T) {
 (int (*)(void))a;
 `
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		//if tu.funcDecls == nil || len(tu.funcDecls) != 1 {
-		//t.Errorf("failed to parse func decl")
-		//}
-
-		//if tu.recordDecls == nil || len(tu.recordDecls) != 3 {
-		//t.Errorf("failed to parse some records")
-		//}
-
-		if tu.varDecls == nil || len(tu.varDecls) != 1 {
+		if tu.VarDecls == nil || len(tu.VarDecls) != 1 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -238,10 +231,10 @@ struct grid {
 
 `
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.varDecls == nil || len(tu.varDecls) != 1 {
+		if tu.VarDecls == nil || len(tu.VarDecls) != 1 {
 			t.Errorf("failed to parse some arrays")
 		}
 	}
@@ -259,10 +252,10 @@ struct grid {
 };
 `
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.recordDecls == nil || len(tu.recordDecls) != 2 {
+		if tu.RecordDecls == nil || len(tu.RecordDecls) != 2 {
 			t.Errorf("failed to parse some records")
 		}
 	}
@@ -276,10 +269,10 @@ int N = 10;
 // int arr[N];
 `
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.varDecls == nil || len(tu.varDecls) != 3 {
+		if tu.VarDecls == nil || len(tu.VarDecls) != 3 {
 			t.Errorf("failed to parse some arrays")
 		}
 	}
@@ -426,14 +419,14 @@ int foo(int a, int b)
 }
 	`
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if len(tu.funcDecls) != 1 {
+		if len(tu.FuncDecls) != 1 {
 			t.Errorf("failed to parse func decl")
 		}
 
-		fd := tu.funcDecls[0]
+		fd := tu.FuncDecls[0]
 		if len(fd.Args) != 2 {
 			t.Errorf("# of arguments = %d, expect 2", len(fd.Args))
 		}
@@ -458,14 +451,14 @@ int foo()
 }
 	`
 	ast := testTemplate(t, text)
-	if tu, ok := ast.(*TranslationUnit); !ok {
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if len(tu.funcDecls) != 1 {
+		if len(tu.FuncDecls) != 1 {
 			t.Errorf("failed to parse func decl")
 		}
 
-		fd := tu.funcDecls[0]
+		fd := tu.FuncDecls[0]
 
 		if len(fd.Body.Stmts) != 2 {
 			t.Errorf("# of statements = %d, expect 2", len(fd.Body.Stmts))

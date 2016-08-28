@@ -1,5 +1,5 @@
 // Package ast provides AST
-package parser
+package ast
 
 import (
 	"fmt"
@@ -12,11 +12,11 @@ type Ast interface {
 }
 
 type AstContext struct {
-	top *SymbolScope
+	Top *SymbolScope
 }
 
 type Node struct {
-	ctx *AstContext
+	Ctx *AstContext
 }
 
 func (n *Node) Repr() string {
@@ -25,17 +25,17 @@ func (n *Node) Repr() string {
 
 type TranslationUnit struct {
 	Node
-	filename     string
-	funcDecls    []*FunctionDecl
-	varDecls     []*VariableDecl
-	recordDecls  []*RecordDecl
-	enumDecls    []*EnumDecl
-	typedefDecls []*TypedefDecl
+	Filename     string
+	FuncDecls    []*FunctionDecl
+	VarDecls     []*VariableDecl
+	RecordDecls  []*RecordDecl
+	EnumDecls    []*EnumDecl
+	TypedefDecls []*TypedefDecl
 }
 
 func (tu *TranslationUnit) Repr() string {
 	ty := reflect.TypeOf(tu).Elem()
-	return fmt.Sprintf("%s(%s)", ty.Name(), tu.filename)
+	return fmt.Sprintf("%s(%s)", ty.Name(), tu.Filename)
 }
 
 // considered abstract
@@ -179,7 +179,7 @@ type CompoundLiteralExpr struct {
 
 type InitListExpr struct {
 	Node
-	inits []Expression
+	Inits []Expression
 }
 
 //--------------------------------------------------------------------------------
@@ -252,7 +252,7 @@ func (self *TypedefDecl) Repr() string {
 type VariableDecl struct {
 	Node
 	Sym  string
-	init Expression
+	Init Expression
 }
 
 func (self *VariableDecl) Repr() string {
@@ -465,23 +465,23 @@ func WalkAst(top Ast, wk AstWalker) {
 			if !tryCall(WalkerPropagate, ast) {
 				return
 			}
-			for _, d := range tu.varDecls {
+			for _, d := range tu.VarDecls {
 				visit(d)
 			}
 
-			for _, d := range tu.recordDecls {
+			for _, d := range tu.RecordDecls {
 				visit(d)
 			}
 
-			for _, d := range tu.enumDecls {
+			for _, d := range tu.EnumDecls {
 				visit(d)
 			}
 
-			for _, d := range tu.typedefDecls {
+			for _, d := range tu.TypedefDecls {
 				visit(d)
 			}
 
-			for _, d := range tu.funcDecls {
+			for _, d := range tu.FuncDecls {
 				visit(d)
 			}
 			if !tryCall(WalkerBubbleUp, ast) {
@@ -636,7 +636,7 @@ func WalkAst(top Ast, wk AstWalker) {
 			if !tryCall(WalkerPropagate, ast) {
 				return
 			}
-			for _, init := range e.inits {
+			for _, init := range e.Inits {
 				visit(init)
 			}
 			if !tryCall(WalkerBubbleUp, ast) {
@@ -700,8 +700,8 @@ func WalkAst(top Ast, wk AstWalker) {
 			if !tryCall(WalkerPropagate, ast) {
 				return
 			}
-			if e.init != nil {
-				visit(e.init)
+			if e.Init != nil {
+				visit(e.Init)
 			}
 			if !tryCall(WalkerBubbleUp, ast) {
 				return
