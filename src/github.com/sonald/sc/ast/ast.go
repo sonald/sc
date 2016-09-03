@@ -16,7 +16,8 @@ type AstContext struct {
 }
 
 type Node struct {
-	Ctx *AstContext
+	Ctx   *AstContext
+	Start lexer.Token // first token that initiates the corresponding ast struct
 }
 
 func (n *Node) Repr() string {
@@ -963,4 +964,22 @@ func WalkAst(top Ast, wk AstWalker) {
 	}
 
 	visit(top)
+}
+
+type ReportKind int
+
+const (
+	Info ReportKind = iota
+	Warning
+	Error
+)
+
+type Report struct {
+	Kind ReportKind
+	lexer.Token
+	Desc string
+}
+
+func MakeReport(kd ReportKind, tk lexer.Token, desc string) *Report {
+	return &Report{kd, tk, desc}
 }

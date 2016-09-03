@@ -27,7 +27,9 @@ fill 3 into []
 + insert type conversion
 + struct/union: detect type loops (direct or indirect)
     this should be done in ast traversal stage
-+ type checking
-+ type propagation
-+ insrt cast node (include rvalue casting)
-+ lvalue check
++ [ ] type checking
++ [ ] type propagation (annotate type for every Ref)
++ [ ] insert necessary cast node (include rvalue casting)
++ [ ] lvalue check
++ [ ] all DeclRefExpr ref to defined variable
++ [ ] reserved keyword are not used as ID

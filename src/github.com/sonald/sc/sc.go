@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/sonald/sc/parser"
+	"github.com/sonald/sc/sema"
 	"os"
 )
 
@@ -29,11 +30,13 @@ func main() {
 
 		opts.Reader = os.Stdin
 		p := parser.NewParser()
-		p.Parse(&opts)
+		var tu = p.Parse(&opts)
 
 		if dumpAst {
 			p.DumpAst()
 		}
+
+		sema.RunWalkers(tu)
 		return
 	}
 
@@ -46,11 +49,13 @@ func main() {
 		if r, err := os.Open(f); err == nil {
 			opts.Reader = r
 			p := parser.NewParser()
-			p.Parse(&opts)
+			var tu = p.Parse(&opts)
 
 			if dumpAst {
 				p.DumpAst()
 			}
+
+			sema.RunWalkers(tu)
 		} else {
 			fmt.Errorf("%s", err)
 		}
