@@ -54,7 +54,7 @@ float kernel[10];
 
 // this is complex
 struct Grid {
-    int : 2;
+	int : 2;
     int flag: 5;
     struct sub {
 		float radius;
@@ -77,15 +77,31 @@ void signal(int signo, ...);
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.FuncDecls == nil || len(tu.FuncDecls) != 3 {
+		if len(tu.Decls) != 21 {
+			t.Errorf("failed to parse some decls")
+		}
+
+		var fd, rd, vd int
+		for _, d := range tu.Decls {
+			switch d.(type) {
+			case *a.FunctionDecl:
+				fd++
+			case *a.VariableDecl:
+				vd++
+			case *a.RecordDecl:
+				rd++
+			}
+		}
+
+		if fd != 3 {
 			t.Errorf("failed to parse func decl")
 		}
 
-		if tu.RecordDecls == nil || len(tu.RecordDecls) != 3 {
+		if rd != 3 {
 			t.Errorf("failed to parse some records")
 		}
 
-		if tu.VarDecls == nil || len(tu.VarDecls) != 15 {
+		if vd != 15 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -119,12 +135,34 @@ struct work {
 	int payload[10];
 } s;
 char alphas2[alphas[0] + alphas[1]][fp()][sizeof s.payload + s.kind];
+
+struct Level1 {
+	struct Level2 {
+		struct Level3 {
+			struct Level1* data;
+		} t;
+	} n;
+} i;
 `
 	ast := testTemplate(t, text)
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.VarDecls == nil || len(tu.VarDecls) != 12 {
+		var rd, vd int
+		for _, d := range tu.Decls {
+			switch d.(type) {
+			case *a.VariableDecl:
+				vd++
+			case *a.RecordDecl:
+				rd++
+			}
+		}
+
+		if rd != 4 {
+			t.Errorf("failed to parse some records")
+		}
+
+		if vd != 13 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -166,14 +204,27 @@ color_t clr3 = red;
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.TypedefDecls == nil || len(tu.TypedefDecls) != 8 {
+		var td, rd, vd int
+		for _, d := range tu.Decls {
+			switch d.(type) {
+			case *a.VariableDecl:
+				vd++
+			case *a.EnumDecl:
+				rd++
+			case *a.TypedefDecl:
+				td++
+			}
+		}
+
+		if rd != 2 {
+			t.Errorf("failed to parse some enums")
+		}
+
+		if vd != 7 {
+			t.Errorf("failed to parse some vars")
+		}
+		if td != 8 {
 			t.Errorf("failed to parse some typedefs")
-		}
-		if tu.VarDecls == nil || len(tu.VarDecls) != 7 {
-			t.Errorf("failed to parse some vars")
-		}
-		if tu.EnumDecls == nil || len(tu.EnumDecls) != 2 {
-			t.Errorf("failed to parse some vars")
 		}
 	}
 }
@@ -215,7 +266,7 @@ func testParseTypeCasts(t *testing.T) {
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.VarDecls == nil || len(tu.VarDecls) != 1 {
+		if len(tu.Decls) != 1 {
 			t.Errorf("failed to parse some vars")
 		}
 	}
@@ -234,7 +285,7 @@ struct grid {
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.VarDecls == nil || len(tu.VarDecls) != 1 {
+		if len(tu.Decls) != 1 {
 			t.Errorf("failed to parse some arrays")
 		}
 	}
@@ -255,8 +306,26 @@ struct grid {
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.RecordDecls == nil || len(tu.RecordDecls) != 2 {
+		if len(tu.Decls) != 3 {
 			t.Errorf("failed to parse some records")
+		}
+
+		var fd, rd int
+		for _, d := range tu.Decls {
+			switch d.(type) {
+			case *a.RecordDecl:
+				rd++
+			case *a.FunctionDecl:
+				fd++
+			}
+		}
+
+		if rd != 2 {
+			t.Errorf("failed to parse some records")
+		}
+
+		if fd != 1 {
+			t.Errorf("failed to parse some funcs")
 		}
 	}
 }
@@ -272,7 +341,7 @@ int N = 10;
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if tu.VarDecls == nil || len(tu.VarDecls) != 3 {
+		if len(tu.Decls) != 3 {
 			t.Errorf("failed to parse some arrays")
 		}
 	}
@@ -297,6 +366,13 @@ struct Node2 {
 	struct Node val;
 };
 
+struct Level1 {
+	struct Level2 {
+		struct Level3 {
+			struct Level1 data;
+		} t;
+	} n;
+} i;
 `
 	testTemplate(t, text)
 }
@@ -422,11 +498,11 @@ int foo(int a, int b)
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if len(tu.FuncDecls) != 1 {
+		if len(tu.Decls) != 1 {
 			t.Errorf("failed to parse func decl")
 		}
 
-		fd := tu.FuncDecls[0]
+		fd := tu.Decls[0].(*a.FunctionDecl)
 		if len(fd.Args) != 2 {
 			t.Errorf("# of arguments = %d, expect 2", len(fd.Args))
 		}
@@ -454,11 +530,11 @@ int foo()
 	if tu, ok := ast.(*a.TranslationUnit); !ok {
 		t.Errorf("parse failed")
 	} else {
-		if len(tu.FuncDecls) != 1 {
+		if len(tu.Decls) != 1 {
 			t.Errorf("failed to parse func decl")
 		}
 
-		fd := tu.FuncDecls[0]
+		fd := tu.Decls[0].(*a.FunctionDecl)
 
 		if len(fd.Body.Stmts) != 2 {
 			t.Errorf("# of statements = %d, expect 2", len(fd.Body.Stmts))

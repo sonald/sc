@@ -26,12 +26,8 @@ func (n *Node) Repr() string {
 
 type TranslationUnit struct {
 	Node
-	Filename     string
-	FuncDecls    []*FunctionDecl
-	VarDecls     []*VariableDecl
-	RecordDecls  []*RecordDecl
-	EnumDecls    []*EnumDecl
-	TypedefDecls []*TypedefDecl
+	Filename string
+	Decls    []Statement
 }
 
 func (tu *TranslationUnit) Repr() string {
@@ -378,10 +374,7 @@ type DoStmt struct {
 
 type DeclStmt struct {
 	Node
-	Decls        []*VariableDecl
-	RecordDecls  []*RecordDecl
-	EnumDecls    []*EnumDecl
-	TypedefDecls []*TypedefDecl
+	Decls []Statement
 }
 
 func (self *DeclStmt) Repr() string {
@@ -496,25 +489,11 @@ func WalkAst(top Ast, wk AstWalker) {
 				Pop()
 				return
 			}
-			for _, d := range tu.VarDecls {
+
+			for _, d := range tu.Decls {
 				visit(d)
 			}
 
-			for _, d := range tu.RecordDecls {
-				visit(d)
-			}
-
-			for _, d := range tu.EnumDecls {
-				visit(d)
-			}
-
-			for _, d := range tu.TypedefDecls {
-				visit(d)
-			}
-
-			for _, d := range tu.FuncDecls {
-				visit(d)
-			}
 			if !tryCall(WalkerBubbleUp, ast) {
 				Pop()
 				return
@@ -879,18 +858,6 @@ func WalkAst(top Ast, wk AstWalker) {
 			}
 			for _, stmt := range e.Decls {
 				visit(stmt)
-			}
-
-			for _, d := range e.RecordDecls {
-				visit(d)
-			}
-
-			for _, d := range e.EnumDecls {
-				visit(d)
-			}
-
-			for _, d := range e.TypedefDecls {
-				visit(d)
 			}
 
 			if !tryCall(WalkerBubbleUp, ast) {

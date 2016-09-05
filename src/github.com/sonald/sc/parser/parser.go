@@ -611,12 +611,13 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 		ret.Name = tok.AsString()
 		enumSym.Name = tok
 		if ty := self.LookupUserType(ret.Name); ty != nil {
-			var decls []*ast.EnumDecl
+			var decls []ast.Statement
+
 			switch self.effectiveParent.(type) {
 			case *ast.DeclStmt:
-				decls = self.effectiveParent.(*ast.DeclStmt).EnumDecls
+				decls = self.effectiveParent.(*ast.DeclStmt).Decls
 			case *ast.TranslationUnit:
-				decls = self.tu.EnumDecls
+				decls = self.tu.Decls
 			default:
 				return ty
 			}
@@ -625,11 +626,11 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 				return ty
 			}
 			for _, decl := range decls {
-				if decl.Sym == ret.Name && !decl.IsDefinition {
+				if ed, ok := decl.(*ast.EnumDecl); ok && ed.Sym == ret.Name && !ed.IsDefinition {
 					enumSym = self.LookupTypeSymbol(ret.Name)
 					ret = ty.(*ast.EnumType)
 					isForward = true
-					enumDecl.Prev = decl
+					enumDecl.Prev = ed
 					break
 				}
 			}
@@ -647,9 +648,9 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 	defer func() {
 		if p := recover(); p == nil {
 			if ds, ok := self.effectiveParent.(*ast.DeclStmt); ok {
-				ds.EnumDecls = append(ds.EnumDecls, enumDecl)
+				ds.Decls = append(ds.Decls, enumDecl)
 			} else {
-				self.tu.EnumDecls = append(self.tu.EnumDecls, enumDecl)
+				self.tu.Decls = append(self.tu.Decls, enumDecl)
 			}
 		} else {
 			panic(p) //propagate
@@ -732,12 +733,12 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 		ret.Name = tok.AsString()
 		recSym.Name = tok
 		if ty := self.LookupUserType(ret.Name); ty != nil {
-			var decls []*ast.RecordDecl
+			var decls []ast.Statement
 			switch self.effectiveParent.(type) {
 			case *ast.DeclStmt:
-				decls = self.effectiveParent.(*ast.DeclStmt).RecordDecls
+				decls = self.effectiveParent.(*ast.DeclStmt).Decls
 			case *ast.TranslationUnit:
-				decls = self.tu.RecordDecls
+				decls = self.tu.Decls
 			default:
 				return ty
 			}
@@ -746,12 +747,12 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 				return ty
 			}
 			for _, decl := range decls {
-				if decl.Sym == ret.Name && !decl.IsDefinition {
+				if rd, ok := decl.(*ast.RecordDecl); ok && rd.Sym == ret.Name && !rd.IsDefinition {
 					recSym = self.LookupTypeSymbol(ret.Name)
 					ret = ty.(*ast.RecordType)
 					isForward = true
-					recDecl.Scope = decl.Scope
-					recDecl.Prev = decl
+					recDecl.Scope = rd.Scope
+					recDecl.Prev = rd
 					break
 				}
 			}
@@ -771,9 +772,9 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 		self.PopScope()
 		if p := recover(); p == nil {
 			if ds, ok := self.effectiveParent.(*ast.DeclStmt); ok {
-				ds.RecordDecls = append(ds.RecordDecls, recDecl)
+				ds.Decls = append(ds.Decls, recDecl)
 			} else {
-				self.tu.RecordDecls = append(self.tu.RecordDecls, recDecl)
+				self.tu.Decls = append(self.tu.Decls, recDecl)
 			}
 		} else {
 			// if this is top level of record decl, skip it and continue
@@ -936,17 +937,10 @@ func (self *Parser) parseExternalDecl() ast.Ast {
 		if decl := self.parseDeclarator(tmpl); decl == nil {
 			break
 		} else {
-			switch decl.(type) {
-			case *ast.TypedefDecl:
-				self.tu.TypedefDecls = append(self.tu.TypedefDecls, decl.(*ast.TypedefDecl))
-				util.Printf("parsed %v", decl.Repr())
-			case *ast.VariableDecl:
-				self.tu.VarDecls = append(self.tu.VarDecls, decl.(*ast.VariableDecl))
-				util.Printf("parsed %v", decl.Repr())
-			case *ast.FunctionDecl:
+			self.tu.Decls = append(self.tu.Decls, decl)
+			util.Printf("parsed %v", decl.Repr())
+			if _, ok := decl.(*ast.FunctionDecl); ok {
 				var fdecl = decl.(*ast.FunctionDecl)
-				self.tu.FuncDecls = append(self.tu.FuncDecls, fdecl)
-				util.Printf("parsed %v", decl.Repr())
 
 				if self.peek(0).Kind == lexer.LBRACE {
 					if self.currentScope != fdecl.Scope.Parent {
@@ -959,9 +953,6 @@ func (self *Parser) parseExternalDecl() ast.Ast {
 					// parse of function definition done
 					goto done
 				}
-
-			default:
-				self.parseError(self.peek(0), "")
 			}
 		}
 
@@ -1317,20 +1308,7 @@ func (self *Parser) parseDeclStatement() *ast.DeclStmt {
 		if decl := self.parseDeclarator(tmpl); decl == nil {
 			break
 		} else {
-			switch decl.(type) {
-			case *ast.TypedefDecl:
-				declStmt.TypedefDecls = append(declStmt.TypedefDecls, decl.(*ast.TypedefDecl))
-				util.Printf("parsed %v", decl.Repr())
-			case *ast.VariableDecl:
-				declStmt.Decls = append(declStmt.Decls, decl.(*ast.VariableDecl))
-				util.Printf("parsed %v", decl.Repr())
-			case *ast.RecordDecl:
-				declStmt.RecordDecls = append(declStmt.RecordDecls, decl.(*ast.RecordDecl))
-				util.Printf("parsed %v", decl.Repr())
-
-			default:
-				self.parseError(self.peek(0), "invalid declaration inside block")
-			}
+			declStmt.Decls = append(declStmt.Decls, decl)
 		}
 
 		if self.peek(0).Kind == lexer.COMMA {
