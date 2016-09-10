@@ -19,6 +19,23 @@ func setupFlags() {
 	flag.BoolVar(&dumpTokens, "dump-tokens", dumpTokens, "dump tokens scanned")
 	flag.BoolVar(&dumpAst, "dump-ast", dumpAst, "dump ast parsed")
 }
+
+func parse(opts *parser.ParseOption) bool {
+	p := parser.NewParser()
+	var tu = p.Parse(opts)
+
+	sema.RunWalkers(tu)
+	sema.DumpReports()
+	if dumpAst {
+		p.DumpAst()
+	}
+
+	if len(sema.Reports) > 0 {
+		return false
+	}
+	return true
+}
+
 func main() {
 	setupFlags()
 	flag.Parse()
@@ -29,15 +46,9 @@ func main() {
 		}
 
 		opts.Reader = os.Stdin
-		p := parser.NewParser()
-		var tu = p.Parse(&opts)
-
-		if dumpAst {
-			p.DumpAst()
+		if !parse(&opts) {
+			return
 		}
-
-		sema.RunWalkers(tu)
-		return
 	}
 
 	for _, f := range flag.Args() {
@@ -48,14 +59,10 @@ func main() {
 
 		if r, err := os.Open(f); err == nil {
 			opts.Reader = r
-			p := parser.NewParser()
-			var tu = p.Parse(&opts)
-
-			if dumpAst {
-				p.DumpAst()
+			if !parse(&opts) {
+				return
 			}
 
-			sema.RunWalkers(tu)
 		} else {
 			fmt.Errorf("%s", err)
 		}

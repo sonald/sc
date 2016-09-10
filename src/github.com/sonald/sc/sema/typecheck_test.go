@@ -47,6 +47,7 @@ int main(int argc, char *argv[]) {
 		t.Errorf("parse failed")
 	} else {
 		ast.WalkAst(top, MakeReferenceResolve())
+		DumpReports()
 	}
 }
 
@@ -74,12 +75,24 @@ struct Level1 {
 		} t;
 	} n;
 } i;
+
+
+typedef struct node my_t;
+
+struct node {
+	int val;
+	my_t left, right;
+};
 `
 	top := testTemplate(t, text)
 	if top == nil {
 		t.Errorf("parse failed")
 	} else {
 		ast.WalkAst(top, MakeCheckLoop())
+		if len(Reports) != 5 {
+			t.Errorf("some errors are not detected")
+		}
+		DumpReports()
 	}
 }
 

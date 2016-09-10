@@ -198,8 +198,14 @@ func (self *Parser) parseTypeDecl(sym *ast.Symbol) (isTypedef bool) {
 				ts := tok.AsString()
 				switch ts {
 				case "union", "struct":
+					if ty != nil {
+						self.parseError(tok, err3)
+					}
 					ty = self.parseRecordType()
 				case "enum":
+					if ty != nil {
+						self.parseError(tok, err3)
+					}
 					ty = self.parseEnumType()
 
 				default:
@@ -226,7 +232,6 @@ func (self *Parser) parseTypeDecl(sym *ast.Symbol) (isTypedef bool) {
 			} else if ast.IsTypeQualifier(tok) {
 				self.next()
 				sym.Type = &ast.QualifiedType{Base: sym.Type, Qualifier: ast.TypeQualifier[tok.AsString()]}
-				//self.parseError(tok, "multiple type qualifier specified")
 			} else if tok.AsString() == "inline" {
 				self.next()
 				//FIXME: ignore now
@@ -234,10 +239,13 @@ func (self *Parser) parseTypeDecl(sym *ast.Symbol) (isTypedef bool) {
 				self.parseError(tok, "invalid declaration specifier")
 			}
 		} else if tok.Kind == lexer.IDENTIFIER {
-			//TODO: check if typedef name
+			//TODO: make doCheckError check user type
 			util.Printf("looking up user type %s", tok.AsString())
 			if uty := self.LookupTypedef(tok.AsString()); uty != nil {
 				util.Printf("found usertype %s", tok.AsString())
+				if ty != nil {
+					self.parseError(tok, err3)
+				}
 				ty = uty
 				self.next()
 			} else {
@@ -768,16 +776,15 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 	recSym.Type = ret
 	recSym.NS = ast.TagNS
 	recDecl.Sym = ret.Name
+	if ds, ok := self.effectiveParent.(*ast.DeclStmt); ok {
+		ds.Decls = append(ds.Decls, recDecl)
+	} else {
+		self.tu.Decls = append(self.tu.Decls, recDecl)
+	}
 
 	defer func() {
 		self.PopScope()
-		if p := recover(); p == nil {
-			if ds, ok := self.effectiveParent.(*ast.DeclStmt); ok {
-				ds.Decls = append(ds.Decls, recDecl)
-			} else {
-				self.tu.Decls = append(self.tu.Decls, recDecl)
-			}
-		} else {
+		if p := recover(); p != nil {
 			// if this is top level of record decl, skip it and continue
 			if _, ok := self.currentScope.Owner.(*ast.RecordDecl); !ok {
 				util.Printf(util.Parser, util.Warning, p)
@@ -816,52 +823,11 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 			break
 		}
 
-		var tmplTy ast.SymbolType
 		var tmplSym = &ast.Symbol{}
 		var loc = self.peek(0).Location
 
-		for {
-			tok := self.peek(0)
-			if tok.Kind == lexer.KEYWORD {
-				if ast.IsTypeSpecifier(tok) {
-					if tmplSym.Type != nil {
-						if _, qualified := tmplSym.Type.(*ast.QualifiedType); !qualified {
-							self.parseError(tok, "multiple type specifier")
-						}
-					}
-					switch tok.AsString() {
-					case "int":
-						self.next()
-						tmplTy = &ast.IntegerType{}
-					case "float":
-						self.next()
-						tmplTy = &ast.FloatType{}
-					case "union", "struct":
-						tmplTy = self.parseRecordType()
-
-					default:
-						self.parseError(tok, "not implemented")
-					}
-
-					if tmplSym.Type == nil {
-						tmplSym.Type = tmplTy
-					} else {
-						var qty = tmplSym.Type.(*ast.QualifiedType)
-						for qty.Base != nil {
-							qty = qty.Base.(*ast.QualifiedType)
-						}
-						qty.Base = tmplTy
-					}
-
-				} else if ast.IsTypeQualifier(tok) {
-					self.next()
-					tmplSym.Type = &ast.QualifiedType{Base: tmplSym.Type, Qualifier: ast.TypeQualifier[tok.AsString()]}
-				} else {
-					self.parseError(tok, "invalid field type specifier")
-				}
-			} else {
-				break
-			}
+		if isTypedef := self.parseTypeDecl(tmplSym); isTypedef {
+			self.parseError(self.peek(0), "typedef is not allowed in record")
 		}
 
 		util.Printf("parsed field type template %v", tmplSym)

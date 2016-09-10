@@ -6,16 +6,17 @@ import (
 	"github.com/sonald/sc/lexer"
 	"github.com/sonald/sc/util"
 	"reflect"
+	"sort"
 )
 
 var (
 	err1      = "implicit declaration of function '%s' is invalid in C99"
 	err2      = "use of undeclared identifier '%s'"
-	err3      = "field has incomplete type '%s'"
-	err4      = "field has incomplete type 'my_t' (aka 'struct node2')"
-	reports   []*ast.Report
+	err3      = "field '%s' has incomplete type '%s'"
+	err4      = "field '%s' has incomplete type '%s' (aka '%s')"
+	Reports   []*ast.Report
 	addReport = func(kd ast.ReportKind, tk lexer.Token, desc string) {
-		reports = append(reports, &ast.Report{kd, tk, desc})
+		Reports = append(Reports, &ast.Report{kd, tk, desc})
 	}
 
 	isFuncCall = false
@@ -26,6 +27,7 @@ func MakeCheckLoop() ast.AstWalker {
 	type Node struct {
 		st    ast.SymbolType
 		Start lexer.Token
+		Ref   int
 		Next  *Node
 	}
 
@@ -38,18 +40,14 @@ func MakeCheckLoop() ast.AstWalker {
 	var start lexer.Token
 
 	var addEdge = func(u, v ast.SymbolType, tok lexer.Token) {
-		util.Printf(util.Sema, util.Info, fmt.Sprintf("AddEdge(%s, %s)\n", u, v))
+		util.Printf(util.Sema, util.Info, fmt.Sprintf("AddEdge(%s, %s:%s)\n", u, tok.AsString(), v))
 		if _, ok := g.nodes[u]; !ok {
-			g.nodes[u] = &Node{st: u, Start: start}
+			g.nodes[u] = &Node{st: u, Start: start, Ref: 1}
+		} else {
+			g.nodes[u].Ref++
 		}
 
-		for p := g.nodes[u].Next; p != nil; p = p.Next {
-			if p.st == v {
-				return
-			}
-		}
-
-		var n = &Node{st: v, Start: tok}
+		var n = &Node{st: v, Start: tok, Ref: 1}
 		n.Next = g.nodes[u].Next
 		g.nodes[u].Next = n
 	}
@@ -59,8 +57,9 @@ func MakeCheckLoop() ast.AstWalker {
 
 		var dfs = func(u ast.SymbolType) {
 			for v := g.nodes[u].Next; v != nil; v = v.Next {
-				if visited[v.st] {
-					addReport(ast.Error, v.Start, fmt.Sprintf(err3, v.st))
+				if visited[v.st] && v.Ref > 0 {
+					addReport(ast.Error, v.Start, fmt.Sprintf(err3, v.Start.AsString(), v.st))
+					v.Ref--
 				}
 			}
 		}
@@ -81,15 +80,13 @@ func MakeCheckLoop() ast.AstWalker {
 
 	CheckLoop.WalkTranslationUnit = func(ws ast.WalkStage, e *ast.TranslationUnit, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
-			for u, p := range g.nodes {
+			for _, p := range g.nodes {
 				for v := p.Next; v != nil; v = v.Next {
-					util.Printf(util.Sema, util.Debug, fmt.Sprintf("%s -> %s\n", u, v.st))
+					util.Printf(util.Sema, util.Debug, fmt.Sprintf("(%s, %s) -> (%s, %s)\n",
+						p.Start.AsString(), p.st, v.Start.AsString(), v.st))
 				}
 			}
 			detectLoop()
-			for _, r := range reports {
-				fmt.Printf("error: %v\n", fmt.Sprintf("%d:%d, %s", r.Line, r.Column, r.Desc))
-			}
 		}
 	}
 
@@ -99,6 +96,13 @@ func MakeCheckLoop() ast.AstWalker {
 			switch sym.Type.(type) {
 			case *ast.RecordType, *ast.EnumType:
 				addEdge(cur, sym.Type, e.Start)
+
+			case *ast.UserType:
+				ut := sym.Type.(*ast.UserType)
+				switch ut.Ref.(type) {
+				case *ast.RecordType, *ast.EnumType:
+					addEdge(cur, ut.Ref, e.Start)
+				}
 			}
 		}
 	}
@@ -174,17 +178,8 @@ func MakeReferenceResolve() ast.AstWalker {
 	)
 
 	var referenceResolve struct {
-		WalkTranslationUnit func(ws ast.WalkStage, e *ast.TranslationUnit, ctx *ast.WalkContext)
-		WalkDeclRefExpr     func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool
-		WalkFunctionCall    func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) bool
-	}
-
-	referenceResolve.WalkTranslationUnit = func(ws ast.WalkStage, e *ast.TranslationUnit, ctx *ast.WalkContext) {
-		if ws == ast.WalkerBubbleUp {
-			for _, r := range reports {
-				fmt.Printf("error: %v\n", fmt.Sprintf("%d:%d, %s", r.Line, r.Column, r.Desc))
-			}
-		}
+		WalkDeclRefExpr  func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool
+		WalkFunctionCall func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) bool
 	}
 
 	referenceResolve.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool {
@@ -222,6 +217,21 @@ func RunWalkers(top ast.Ast) {
 		util.Printf("run walker: %v\n", reflect.TypeOf(w))
 		ast.WalkAst(top, w)
 		util.Printf("done walker: %v\n", reflect.TypeOf(w))
+	}
+}
+
+type byPos []*ast.Report
+
+func (a byPos) Len() int      { return len(a) }
+func (a byPos) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a byPos) Less(i, j int) bool {
+	return a[i].Line < a[j].Line || (a[i].Line == a[j].Line && a[i].Column < a[j].Column)
+}
+
+func DumpReports() {
+	sort.Stable(byPos(Reports))
+	for _, r := range Reports {
+		fmt.Printf("error: %v\n", fmt.Sprintf("%d:%d, %s", r.Line, r.Column, r.Desc))
 	}
 }
 

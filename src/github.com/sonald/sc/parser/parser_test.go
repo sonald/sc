@@ -172,6 +172,7 @@ func TestParseUserTypes(t *testing.T) {
 	var text = `
 struct Tree {
 	int val;
+	const unsigned restrict int* p;
 };
 
 struct Tree;
@@ -234,9 +235,12 @@ func TestParseComplexTypes(t *testing.T) {
 typedef struct node node;
 struct node typedef node2;
 
+//error
+//typedef int union undef unused;
+
 struct node {
 	int val;
-} node; // error, namespace conflict
+} node; // error, namespace conflict, so does not stored in parsed ast
 
 //typedef's introduce ambiguity
 
