@@ -236,7 +236,7 @@ func (self *Parser) parseTypeDecl(sym *ast.Symbol) (isTypedef bool) {
 		} else if tok.Kind == lexer.IDENTIFIER {
 			//TODO: check if typedef name
 			util.Printf("looking up user type %s", tok.AsString())
-			if uty := self.LookupUserType(tok.AsString()); uty != nil {
+			if uty := self.LookupTypedef(tok.AsString()); uty != nil {
 				util.Printf("found usertype %s", tok.AsString())
 				ty = uty
 				self.next()
@@ -325,7 +325,7 @@ func (self *Parser) parseFunctionParams(decl *ast.FunctionDecl, ty *ast.Function
 				var pd = &ast.ParamDecl{decl.Node, arg.(*ast.VariableDecl).Sym}
 				decl.Args = append(decl.Args, pd)
 
-				pty := decl.Scope.LookupSymbol(pd.Sym, false)
+				pty := decl.Scope.LookupSymbol(pd.Sym, ast.OrdinaryNS)
 				ty.Args = append(ty.Args, pty.Type)
 				util.Printf("parsed arg %v", pd.Repr())
 			default:
@@ -366,7 +366,7 @@ func (self *Parser) parseFunctionParamTypes(ty *ast.Function) {
 			switch arg.(type) {
 			case *ast.VariableDecl:
 				var pd = arg.(*ast.VariableDecl).Sym
-				pty := self.LookupSymbol(pd)
+				pty := self.LookupSymbol(pd, ast.OrdinaryNS)
 				ty.Args = append(ty.Args, pty.Type)
 				util.Printf("parsed arg type %v", pty.Type)
 			default:
@@ -471,11 +471,8 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 			id = &tok
 			idLevel = nested
 			finalSym.Name = *id
-			if isTypedef {
-				self.AddTypeSymbol(&finalSym)
-			} else {
-				self.AddSymbol(&finalSym)
-			}
+			finalSym.NS = ast.OrdinaryNS
+			self.AddSymbol(&finalSym)
 		}
 
 		switch self.peek(0).Kind {
@@ -587,7 +584,7 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 
 	if isTypedef {
 		finalSym.Type = &ast.UserType{id.AsString(), finalSym.Type}
-		self.AddUserType(finalSym.Type)
+		self.AddNamedType(finalSym.Type)
 	}
 
 	util.Printf(util.Parser, util.Verbose, "parsed %v %v", finalSym.Name.AsString(), finalSym.Type)
@@ -610,7 +607,7 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 		self.next()
 		ret.Name = tok.AsString()
 		enumSym.Name = tok
-		if ty := self.LookupUserType(ret.Name); ty != nil {
+		if ty := self.LookupNamedType(ret.Name, ast.TagNS); ty != nil {
 			var decls []ast.Statement
 
 			switch self.effectiveParent.(type) {
@@ -627,7 +624,7 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 			}
 			for _, decl := range decls {
 				if ed, ok := decl.(*ast.EnumDecl); ok && ed.Sym == ret.Name && !ed.IsDefinition {
-					enumSym = self.LookupTypeSymbol(ret.Name)
+					enumSym = self.LookupSymbol(ret.Name, ast.TagNS)
 					ret = ty.(*ast.EnumType)
 					isForward = true
 					enumDecl.Prev = ed
@@ -645,6 +642,8 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 
 	enumSym.Type = ret
 	enumDecl.Sym = ret.Name
+	enumSym.NS = ast.TagNS
+
 	defer func() {
 		if p := recover(); p == nil {
 			if ds, ok := self.effectiveParent.(*ast.DeclStmt); ok {
@@ -658,8 +657,8 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 	}()
 
 	if !isForward {
-		self.AddUserType(ret)
-		self.AddTypeSymbol(enumSym)
+		self.AddNamedType(ret)
+		self.AddSymbol(enumSym)
 	}
 
 	if self.peek(0).Kind == lexer.SEMICOLON {
@@ -689,8 +688,9 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 		es.Type = et
 		es.Name = tok
 		//FIXME: do check if redeclaration happens
-		self.AddUserType(et)
-		self.AddTypeSymbol(es)
+		self.AddNamedType(et)
+		es.NS = ast.OrdinaryNS
+		self.AddSymbol(es)
 
 		e.Sym = et.Name
 		e.Loc = tok.Location
@@ -732,7 +732,7 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 	if tok = self.next(); tok.Kind == lexer.IDENTIFIER {
 		ret.Name = tok.AsString()
 		recSym.Name = tok
-		if ty := self.LookupUserType(ret.Name); ty != nil {
+		if ty := self.LookupNamedType(ret.Name, ast.TagNS); ty != nil {
 			var decls []ast.Statement
 			switch self.effectiveParent.(type) {
 			case *ast.DeclStmt:
@@ -748,7 +748,7 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 			}
 			for _, decl := range decls {
 				if rd, ok := decl.(*ast.RecordDecl); ok && rd.Sym == ret.Name && !rd.IsDefinition {
-					recSym = self.LookupTypeSymbol(ret.Name)
+					recSym = self.LookupSymbol(ret.Name, ast.TagNS)
 					ret = ty.(*ast.RecordType)
 					isForward = true
 					recDecl.Scope = rd.Scope
@@ -766,6 +766,7 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 	}
 
 	recSym.Type = ret
+	recSym.NS = ast.TagNS
 	recDecl.Sym = ret.Name
 
 	defer func() {
@@ -792,15 +793,18 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 	//FIXME: if parse failed, need to deregister it
 
 	if !isForward {
-		self.AddUserType(ret)
-		self.AddTypeSymbol(recSym)
+		self.AddNamedType(ret)
+		self.AddSymbol(recSym)
 		recDecl.Scope = self.PushScope()
 	} else {
 		self.currentScope = recDecl.Scope
 	}
 	recDecl.Scope.Owner = recDecl //NOTE: this changes Owner to last definition of the same record
-	if self.peek(0).Kind == lexer.SEMICOLON {
+	if nt := self.peek(0); nt.Kind == lexer.SEMICOLON {
 		//forward declaration
+		return ret
+	} else if nt.Kind != lexer.LBRACE {
+		// consider it as forward decl (e.g inside a typedefing)
 		return ret
 	}
 
@@ -878,7 +882,7 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 				switch decl.(type) {
 				case *ast.VariableDecl:
 					var vd = decl.(*ast.VariableDecl)
-					var vs = self.LookupSymbol(vd.Sym)
+					var vs = self.LookupSymbol(vd.Sym, ast.OrdinaryNS)
 
 					fd.Loc = vs.Name.Location
 					fd.Sym = vd.Sym
@@ -1522,7 +1526,7 @@ func (self *Parser) parseTypeExpression() ast.SymbolType {
 	self.parseTypeDecl(tmpl)
 	if decl := self.parseDeclarator(tmpl); decl != nil {
 		if vd, ok := decl.(*ast.VariableDecl); ok {
-			sym := self.LookupSymbol(vd.Sym)
+			sym := self.LookupSymbol(vd.Sym, ast.OrdinaryNS)
 			return sym.Type
 		}
 	}
@@ -1707,56 +1711,65 @@ func (self *Parser) PopScope() *ast.SymbolScope {
 }
 
 func (self *Parser) AddSymbol(sym *ast.Symbol) {
-	self.currentScope.AddSymbol(sym)
-}
-
-// this is for type symbol name such as struct/enum/union/typedef
-func (self *Parser) AddTypeSymbol(sym *ast.Symbol) {
 	var current = self.currentScope
-
-done:
-	for ; current != nil; current = current.Parent {
-		switch current.Owner.(type) {
-		case *ast.CompoundStmt:
-			break done
-		case *ast.TranslationUnit:
-			break done
+	if sym.NS == ast.TagNS {
+	done:
+		for ; current != nil; current = current.Parent {
+			switch current.Owner.(type) {
+			case *ast.CompoundStmt:
+				break done
+			case *ast.TranslationUnit:
+				break done
+			}
 		}
+
 	}
-	sym.Custom = true
 	current.AddSymbol(sym)
 }
 
-func (self *Parser) LookupTypeSymbol(name string) *ast.Symbol {
-	return self.currentScope.LookupSymbol(name, true)
+func (self *Parser) LookupSymbol(name string, ns ast.SymbolNamespace) *ast.Symbol {
+	return self.currentScope.LookupSymbol(name, ns)
 }
 
-func (self *Parser) LookupSymbol(name string) *ast.Symbol {
-	return self.currentScope.LookupSymbol(name, false)
-}
-
-func (self *Parser) AddUserType(st ast.SymbolType) {
+func (self *Parser) AddNamedType(st ast.SymbolType) {
 	var current = self.currentScope
 
-done:
-	for ; current != nil; current = current.Parent {
-		switch current.Owner.(type) {
-		case *ast.CompoundStmt:
-			break done
-		case *ast.TranslationUnit:
-			break done
+	switch st.(type) {
+	case *ast.RecordType, *ast.EnumType:
+	done:
+		for ; current != nil; current = current.Parent {
+			switch current.Owner.(type) {
+			case *ast.CompoundStmt:
+				break done
+			case *ast.TranslationUnit:
+				break done
+			}
 		}
 	}
 
-	current.RegisterUserType(st)
+	current.RegisterNamedType(st)
 }
 
-func (self *Parser) LookupUserType(name string) ast.SymbolType {
+func (self *Parser) LookupNamedType(name string, ns ast.SymbolNamespace) ast.SymbolType {
 	var current = self.currentScope
 
 	for ; current != nil; current = current.Parent {
-		if ty := current.LookupUserType(name); ty != nil {
+		if ty := current.LookupNamedType(name, ns); ty != nil {
 			return ty
+		}
+	}
+	return nil
+}
+
+func (self *Parser) LookupTypedef(name string) ast.SymbolType {
+	var current = self.currentScope
+
+	for ; current != nil; current = current.Parent {
+		if ty := current.LookupNamedType(name, ast.OrdinaryNS); ty != nil {
+			if _, ok := ty.(*ast.UserType); ok {
+				return ty
+			}
+			break
 		}
 	}
 	return nil
@@ -2120,7 +2133,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkRecordDecl = func(ws ast.WalkStage, e *ast.RecordDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := ctx.Scope.LookupSymbol(e.Sym, true)
+			sym := ctx.Scope.LookupSymbol(e.Sym, ast.TagNS)
 
 			ty := "struct"
 			if sym.Type.(*ast.RecordType).Union {
@@ -2128,9 +2141,9 @@ func (self *Parser) DumpAst() {
 			}
 
 			if e.Prev != nil {
-				log(fmt.Sprintf("ast.RecordDecl(%s %s prev %p)", ty, e.Sym, e.Prev))
+				log(fmt.Sprintf("RecordDecl(%s %s prev %p)", ty, e.Sym, e.Prev))
 			} else {
-				log(fmt.Sprintf("ast.RecordDecl(%s %s)", ty, e.Sym))
+				log(fmt.Sprintf("RecordDecl(%s %s)", ty, e.Sym))
 			}
 			stack++
 
@@ -2148,7 +2161,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkEnumDecl = func(ws ast.WalkStage, e *ast.EnumDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log(fmt.Sprintf("ast.EnumDecl(%s prev %p)", e.Sym, e.Prev))
+			log(fmt.Sprintf("EnumDecl(%s prev %p)", e.Sym, e.Prev))
 			stack++
 
 		} else {
@@ -2157,16 +2170,16 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkTypedefDecl = func(ws ast.WalkStage, e *ast.TypedefDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := ctx.Scope.LookupSymbol(e.Sym, true)
+			sym := ctx.Scope.LookupSymbol(e.Sym, ast.OrdinaryNS)
 
-			log(fmt.Sprintf("ast.TypedefDecl(%s)", sym))
+			log(fmt.Sprintf("TypedefDecl(%s)", sym))
 			stack++
 		} else {
 			stack--
 		}
 	}
 	walker.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext) {
-		sym := ctx.Scope.LookupSymbol(e.Sym, false)
+		sym := ctx.Scope.LookupSymbol(e.Sym, ast.OrdinaryNS)
 		if ws == ast.WalkerPropagate {
 			if ty, isArray := sym.Type.(*ast.Array); isArray {
 				arraymode = true
@@ -2189,7 +2202,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkParamDecl = func(ws ast.WalkStage, e *ast.ParamDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := ctx.Scope.LookupSymbol(e.Sym, false)
+			sym := ctx.Scope.LookupSymbol(e.Sym, ast.OrdinaryNS)
 			ty := reflect.TypeOf(e).Elem()
 			log(fmt.Sprintf("%s(%v)", ty.Name(), sym))
 			stack++
@@ -2199,7 +2212,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkFunctionDecl = func(ws ast.WalkStage, e *ast.FunctionDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			sym := ctx.Scope.LookupSymbol(e.Name, false)
+			sym := ctx.Scope.LookupSymbol(e.Name, ast.OrdinaryNS)
 			log(fmt.Sprintf("FuncDecl(%v)", sym))
 			stack++
 		} else {
@@ -2208,7 +2221,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkExprStmt = func(ws ast.WalkStage, e *ast.ExprStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.ExprStmt")
+			log("ExprStmt")
 			stack++
 		} else {
 			stack--
@@ -2216,7 +2229,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkLabelStmt = func(ws ast.WalkStage, e *ast.LabelStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log(fmt.Sprintf("ast.LabelStmt(%s)", e.Label))
+			log(fmt.Sprintf("LabelStmt(%s)", e.Label))
 			stack++
 		} else {
 			stack--
@@ -2225,7 +2238,7 @@ func (self *Parser) DumpAst() {
 
 	walker.WalkCaseStmt = func(ws ast.WalkStage, e *ast.CaseStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.CaseStmt")
+			log("CaseStmt")
 			stack++
 		} else {
 			stack--
@@ -2233,7 +2246,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkDefaultStmt = func(ws ast.WalkStage, e *ast.DefaultStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.DefaultStmt")
+			log("DefaultStmt")
 			stack++
 		} else {
 			stack--
@@ -2241,7 +2254,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkReturnStmt = func(ws ast.WalkStage, e *ast.ReturnStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.ReturnStmt")
+			log("ReturnStmt")
 			stack++
 		} else {
 			stack--
@@ -2249,7 +2262,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkSwitchStmt = func(ws ast.WalkStage, e *ast.SwitchStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.SwitchStmt")
+			log("SwitchStmt")
 			stack++
 		} else {
 			stack--
@@ -2257,7 +2270,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkWhileStmt = func(ws ast.WalkStage, e *ast.WhileStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.WhileStmt")
+			log("WhileStmt")
 			stack++
 		} else {
 			stack--
@@ -2265,7 +2278,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkDoStmt = func(ws ast.WalkStage, e *ast.DoStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.DoStmt")
+			log("DoStmt")
 			stack++
 		} else {
 			stack--
@@ -2273,7 +2286,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkDeclStmt = func(ws ast.WalkStage, e *ast.DeclStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.DeclStmt")
+			log("DeclStmt")
 			stack++
 		} else {
 			stack--
@@ -2281,7 +2294,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkIfStmt = func(ws ast.WalkStage, e *ast.IfStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.IfStmt")
+			log("IfStmt")
 			stack++
 		} else {
 			stack--
@@ -2299,7 +2312,7 @@ func (self *Parser) DumpAst() {
 	walker.WalkForStmt = func(ws ast.WalkStage, e *ast.ForStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 
-			log("ast.ForStmt")
+			log("ForStmt")
 			stack++
 		} else {
 			stack--
@@ -2307,7 +2320,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkCompoundStmt = func(ws ast.WalkStage, e *ast.CompoundStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.CompoundStmt")
+			log("CompoundStmt")
 			stack++
 		} else {
 			stack--

@@ -279,14 +279,29 @@ func (s *UserType) String() string {
 	return fmt.Sprintf("%s := %v", s.Name, s.Ref)
 }
 
-// we actually have two kinds of symbols
-// first is normal simple reside in VariableDecl or FunctionDecl
-// the second is type symbol for user defined type names
+type LabelType struct {
+	Name string
+}
+
+func (s *LabelType) String() string {
+	return fmt.Sprintf("Label(%s)", s.Name)
+}
+
+type SymbolNamespace int
+
+const (
+	OrdinaryNS SymbolNamespace = iota
+	LabelNS
+	TagNS    // for tag of records & enums
+	MemberNS // for members of records & enums, and these symbols are stored in SymbolScope related to owner
+	AnyNS    // used for lookup
+)
+
 type Symbol struct {
-	Name   lexer.Token
-	Type   SymbolType
-	Custom bool // true if a type symbol
+	Name lexer.Token
+	Type SymbolType
 	Storage
+	NS SymbolNamespace
 }
 
 func (sym *Symbol) String() string {
@@ -314,15 +329,21 @@ type SymbolScope struct {
 }
 
 func (scope *SymbolScope) AddSymbol(sym *Symbol) {
+	for _, sym2 := range scope.Symbols {
+		if sym2.NS == sym.NS && sym2.Name.AsString() == sym.Name.AsString() {
+			panic(fmt.Sprintf("redeclaration of %s, previous is at %d:%d", sym.Name.AsString(),
+				sym2.Name.Line, sym2.Name.Column))
+		}
+	}
 	scope.Symbols = append(scope.Symbols, sym)
 }
 
-func (scope *SymbolScope) LookupSymbol(name string, customed bool) *Symbol {
+func (scope *SymbolScope) LookupSymbol(name string, ns SymbolNamespace) *Symbol {
 	var current = scope
 
 	for ; current != nil; current = current.Parent {
 		for _, sym := range current.Symbols {
-			if sym.Custom == customed && sym.Name.AsString() == name {
+			if sym.NS == ns && sym.Name.AsString() == name {
 				return sym
 			}
 		}
@@ -332,27 +353,39 @@ func (scope *SymbolScope) LookupSymbol(name string, customed bool) *Symbol {
 }
 
 //FIXME: record and typedef are two distinct name spaces
-func (scope *SymbolScope) RegisterUserType(st SymbolType) {
-	var name string
+func (scope *SymbolScope) RegisterNamedType(st SymbolType) {
+	var (
+		name string
+		ns   SymbolNamespace
+	)
+
 	switch st.(type) {
 	case *RecordType:
 		rt := st.(*RecordType)
 		name = rt.Name
+		ns = TagNS
 
 	case *EnumType:
 		et := st.(*EnumType)
 		name = et.Name
+		ns = TagNS
 
 	case *EnumeratorType:
 		et := st.(*EnumeratorType)
 		name = et.Name
+		ns = OrdinaryNS
 
 	case *UserType:
 		ut := st.(*UserType)
 		name = ut.Name
+		ns = OrdinaryNS
+
+	case *LabelType:
+		name = st.(*LabelType).Name
+		ns = LabelNS
 	}
 
-	if prev := scope.LookupUserType(name); prev != nil {
+	if prev := scope.LookupNamedType(name, ns); prev != nil {
 		var s = [2]string{"type redeclartion, previous is at ", ""}
 		panic(fmt.Sprintf(s[0], s[1]))
 
@@ -361,33 +394,42 @@ func (scope *SymbolScope) RegisterUserType(st SymbolType) {
 	}
 }
 
-//FIXME: record and typedef are two distinct name spaces
-func (scope *SymbolScope) LookupUserType(name string) SymbolType {
+func (scope *SymbolScope) LookupNamedType(name string, ns SymbolNamespace) SymbolType {
+	var match = func(desired SymbolNamespace) bool {
+		return ns == AnyNS || ns == desired
+	}
+
 	for _, st := range scope.types {
 		switch st.(type) {
 		case *RecordType:
 			rt := st.(*RecordType)
-			if rt.Name == name {
+			if match(TagNS) && rt.Name == name {
 				return rt
 			}
 		case *EnumeratorType:
 			et := st.(*EnumeratorType)
-			if et.Name == name {
+			if match(OrdinaryNS) && et.Name == name {
 				return et
 			}
 		case *EnumType:
 			et := st.(*EnumType)
-			if et.Name == name {
+			if match(TagNS) && et.Name == name {
 				return et
 			}
 		case *UserType:
 			ut := st.(*UserType)
-			if ut.Name == name {
+			if match(OrdinaryNS) && ut.Name == name {
 				return ut
 			}
 
+		case *LabelType:
+			lt := st.(*LabelType)
+			if match(LabelNS) && lt.Name == name {
+				return lt
+			}
+
 		default:
-			panic("invalid type for usertype")
+			panic("invalid type for namedtype")
 		}
 	}
 

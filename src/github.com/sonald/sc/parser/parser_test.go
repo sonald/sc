@@ -229,6 +229,57 @@ color_t clr3 = red;
 	}
 }
 
+func TestParseComplexTypes(t *testing.T) {
+	var text = `
+typedef struct node node;
+struct node typedef node2;
+
+struct node {
+	int val;
+} node; // error, namespace conflict
+
+//typedef's introduce ambiguity
+
+typedef int it;
+it(Y); // this is var (Y) decl
+
+typedef int T;
+f(T); // this is func (f) decl
+`
+	ast := testTemplate(t, text)
+	if tu, ok := ast.(*a.TranslationUnit); !ok {
+		t.Errorf("parse failed")
+	} else {
+		var rd, td, fd, vd int
+		for _, d := range tu.Decls {
+			switch d.(type) {
+			case *a.RecordDecl:
+				rd++
+			case *a.VariableDecl:
+				vd++
+			case *a.FunctionDecl:
+				fd++
+			case *a.TypedefDecl:
+				td++
+			}
+		}
+
+		if rd != 2 {
+			t.Errorf("failed to parse some records")
+		}
+
+		if fd != 1 {
+			t.Errorf("failed to parse some funcs")
+		}
+
+		if vd != 1 {
+			t.Errorf("failed to parse some vars")
+		}
+		if td != 4 {
+			t.Errorf("failed to parse some typedefs")
+		}
+	}
+}
 func testParseNamespaces(t *testing.T) {
 	var text = `
 // c has multiple parallel namespaces, the same name may 
