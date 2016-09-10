@@ -50,6 +50,39 @@ int main(int argc, char *argv[]) {
 	}
 }
 
+func TestDetectLoop(t *testing.T) {
+	var text = `
+struct Tree {
+    int payload;
+    struct Tree Left, *Right;
+} tree;
+
+
+struct Node2;
+struct Node {
+	int payload;
+	struct Node2 child;
+} nd;
+struct Node2 {
+	struct Node val;
+};
+
+struct Level1 {
+	struct Level2 {
+		struct Level3 {
+			struct Level1 parent;
+		} t;
+	} n;
+} i;
+`
+	top := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckLoop())
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

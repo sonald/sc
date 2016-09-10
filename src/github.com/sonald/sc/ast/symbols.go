@@ -343,7 +343,7 @@ func (scope *SymbolScope) LookupSymbol(name string, ns SymbolNamespace) *Symbol 
 
 	for ; current != nil; current = current.Parent {
 		for _, sym := range current.Symbols {
-			if sym.NS == ns && sym.Name.AsString() == name {
+			if (sym.NS == ns || ns == AnyNS) && sym.Name.AsString() == name {
 				return sym
 			}
 		}

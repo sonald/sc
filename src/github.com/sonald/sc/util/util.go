@@ -147,5 +147,9 @@ func init() {
 			default:
 			}
 		}
+
+		if AllowedDomains != 0 {
+			AllowedLevel = 0xff
+		}
 	}
 }
