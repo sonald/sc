@@ -446,15 +446,20 @@ type WalkContext struct {
 	// current effective scope
 	Scope *SymbolScope
 	Flags uint
+	Value interface{} // allow callee to carry info
 }
 
-func WalkAst(top Ast, wk AstWalker) {
+func WalkAst(top Ast, wk AstWalker, cont ...interface{}) interface{} {
 	var (
 		wkValue = reflect.ValueOf(wk)
 		visit   func(ast Ast)
 		ctx     = &WalkContext{}
 		scopes  []*SymbolScope
 	)
+
+	if _, ok := top.(*TranslationUnit); !ok && len(cont) > 0 {
+		ctx = cont[0].(*WalkContext)
+	}
 
 	var Pop = func() *SymbolScope {
 		sc := scopes[len(scopes)-1]
@@ -873,7 +878,7 @@ func WalkAst(top Ast, wk AstWalker) {
 			}
 			if e.Decl != nil {
 				visit(e.Decl)
-			} else {
+			} else if e.Init != nil {
 				visit(e.Init)
 			}
 			visit(e.Cond)
@@ -931,6 +936,8 @@ func WalkAst(top Ast, wk AstWalker) {
 	}
 
 	visit(top)
+
+	return ctx.Value
 }
 
 type ReportKind int

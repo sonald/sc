@@ -19,6 +19,7 @@ func testTemplate(t *testing.T, text string) ast.Ast {
 	p := parser.NewParser()
 	top := p.Parse(&opts)
 
+	Reports = Reports[:0]
 	p.DumpAst()
 	return top
 }
@@ -40,6 +41,27 @@ int main(int argc, char *argv[]) {
 
 	fread((void*)bufp, sizeof buf, 1, fp);
 	fclose(fp);
+}
+`
+	top := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeReferenceResolve())
+		DumpReports()
+	}
+}
+
+func TestRefs(t *testing.T) {
+	var text = `
+int main() {
+	int total = 0;
+	int N = 10;
+	for (int i = 0; i < N; i++) {
+		total += i;
+	}
+
+	return total;
 }
 `
 	top := testTemplate(t, text)
