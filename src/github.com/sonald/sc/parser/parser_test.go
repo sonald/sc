@@ -475,6 +475,7 @@ int main(int arg)
 	int total = 0;
 	for (int i = 0; i < arg; i++) {
 		total += i;
+		continue;
 	}
 
 	while (arg > 0) 
@@ -484,11 +485,10 @@ int main(int arg)
 
 	goto _done;
 	switch (arg) {
-	case 1: return 100;
-	case -1: return -100;
+	case 1: return 100; break;
+	case -1: case -2: return -100;
 	default: return 0;
 	}
-
 _done:
 	return arg;
 }
