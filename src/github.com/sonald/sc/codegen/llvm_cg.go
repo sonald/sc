@@ -80,11 +80,11 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		llvmCtx llvm.Context
 		builder llvm.Builder
 		top     *ast.TranslationUnit
-		symbols []llvm.Value // in order
+		symbols []llvm.Value      // in order
+		breaks  []llvm.BasicBlock // stack of targets for `break` statement
 		sw      struct {
 			switch_val  llvm.Value // if non-nil, inside switch statement
 			default_bb  llvm.BasicBlock
-			end_bb      llvm.BasicBlock
 			cases       []llvm.BasicBlock
 			count_cases bool // if true, count cases recursively
 			num_cases   int
@@ -176,6 +176,19 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return llvm.Value{}
 	}
 
+	var PushLabel = func(bb llvm.BasicBlock) {
+		walker.Info.breaks = append(walker.Info.breaks, bb)
+	}
+
+	var PopLabel = func() {
+		var brs = walker.Info.breaks
+		walker.Info.breaks = brs[:len(brs)-1]
+	}
+
+	var GetLabel = func() llvm.BasicBlock {
+		return walker.Info.breaks[len(walker.Info.breaks)-1]
+	}
+
 	walker.WalkTranslationUnit = func(ws ast.WalkStage, tu *ast.TranslationUnit, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			util.Printf("generated code\n")
@@ -211,6 +224,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 
 	walker.WalkBinaryOperation = func(ws ast.WalkStage, e *ast.BinaryOperation, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return false
+		}
 		if ws == ast.WalkerPropagate {
 			var lhs, rhs, op llvm.Value
 
@@ -446,12 +462,13 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 
 	walker.WalkBreakStmt = func(ws ast.WalkStage, e *ast.BreakStmt, ctx *ast.WalkContext) {
+		if walker.Info.sw.count_cases {
+			return
+		}
 		if ws == ast.WalkerPropagate {
-			if !walker.Info.sw.count_cases {
-				var orig = walker.Info.builder.GetInsertBlock()
-				if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
-					walker.Info.builder.CreateBr(walker.Info.sw.end_bb)
-				}
+			var orig = walker.Info.builder.GetInsertBlock()
+			if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
+				walker.Info.builder.CreateBr(GetLabel())
 			}
 		}
 	}
@@ -495,6 +512,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		}
 	}
 	walker.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return false
+		}
 		if ws == ast.WalkerBubbleUp {
 			sym := ctx.Scope.LookupSymbol(e.Sym, ast.OrdinaryNS)
 			var vty = symbolTy2llvmType(sym.Type)
@@ -503,7 +523,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				log("decl global %s\n", sym.Name.AsString())
 				var val = llvm.AddGlobal(walker.Info.Mod, vty, sym.Name.AsString())
 				if e.Init != nil {
-					val.SetInitializer(ast.WalkAst(e.Init, walker, ctx).(llvm.Value))
+					val.SetInitializer(ctx.Value.(llvm.Value))
 				}
 				ctx.Value = val
 				Append(val)
@@ -511,8 +531,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				log("decl local %s\n", sym.Name.AsString())
 				var v = walker.Info.builder.CreateAlloca(vty, sym.Name.AsString())
 				if e.Init != nil {
-					walker.Info.builder.CreateStore(ast.WalkAst(e.Init, walker, ctx).(llvm.Value), v)
+					walker.Info.builder.CreateStore(ctx.Value.(llvm.Value), v)
 				}
+				ctx.Value = v
 				Append(v)
 			}
 
@@ -557,18 +578,17 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		}
 	}
 	walker.WalkDeclStmt = func(ws ast.WalkStage, e *ast.DeclStmt, ctx *ast.WalkContext) bool {
-		if ws == ast.WalkerPropagate {
-			if walker.Info.sw.count_cases {
-				return false
-			}
+		if walker.Info.sw.count_cases {
+			return false
 		}
 		return true
 	}
 	walker.WalkExprStmt = func(ws ast.WalkStage, e *ast.ExprStmt, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return false
+		}
 		if ws == ast.WalkerPropagate {
-			if !walker.Info.sw.count_cases {
-				ast.WalkAst(e.Expr, walker, ctx)
-			}
+			ast.WalkAst(e.Expr, walker, ctx)
 			return false
 		}
 		return true
@@ -583,6 +603,8 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		if ws == ast.WalkerPropagate {
 			if walker.Info.sw.count_cases {
 				walker.Info.sw.num_cases++
+				return true
+
 			} else {
 				var orig = walker.Info.builder.GetInsertBlock()
 				var fn = orig.Parent()
@@ -613,8 +635,11 @@ func MakeLLVMCodeGen() ast.AstWalker {
 			if walker.Info.sw.count_cases {
 				walker.Info.sw.has_default = true
 			} else {
-				var orig = walker.Info.builder.GetInsertBlock()
+				if !walker.Info.sw.has_default {
+					panic("impossible")
+				}
 
+				var orig = walker.Info.builder.GetInsertBlock()
 				walker.Info.sw.default_bb.MoveAfter(orig)
 
 				walker.Info.builder.SetInsertPoint(walker.Info.sw.default_bb,
@@ -629,10 +654,10 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkReturnStmt = func(ws ast.WalkStage, e *ast.ReturnStmt, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return false
+		}
 		if ws == ast.WalkerBubbleUp {
-			if walker.Info.sw.count_cases {
-				return false
-			}
 
 			var val = ctx.Value.(llvm.Value)
 			if val.Type().TypeKind() == llvm.PointerTypeKind {
@@ -649,6 +674,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 			var fn = orig.Parent()
 
 			walker.Info.sw.count_cases = true
+			log("SwitchStmt collecting  cases\n")
 			ast.WalkAst(e.Body, walker, ctx)
 			walker.Info.sw.count_cases = false
 
@@ -663,7 +689,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				default_bb = llvm.AddBasicBlock(fn, "default")
 			}
 			walker.Info.sw.default_bb = default_bb
-			walker.Info.sw.end_bb = end_bb
+			PushLabel(end_bb)
 
 			walker.Info.builder.CreateBr(cond_bb)
 
@@ -681,18 +707,18 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 			orig = walker.Info.builder.GetInsertBlock()
 			if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
-				walker.Info.builder.CreateBr(end_bb)
+				walker.Info.builder.CreateBr(GetLabel())
 			}
 
 			end_bb.MoveAfter(fn.LastBasicBlock())
 			walker.Info.builder.SetInsertPoint(end_bb, end_bb.LastInstruction())
+			PopLabel()
 
 			//clear sw
 			walker.Info.sw.switch_val = llvm.Value{}
 			walker.Info.sw.has_default = false
 			walker.Info.sw.count_cases = false
 			walker.Info.sw.num_cases = 0
-			walker.Info.sw.end_bb = llvm.BasicBlock{}
 			walker.Info.sw.default_bb = llvm.BasicBlock{}
 			walker.Info.sw.cases = nil
 			return false
@@ -700,21 +726,23 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkWhileStmt = func(ws ast.WalkStage, e *ast.WhileStmt, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return true
+		}
 		if ws == ast.WalkerPropagate {
-			if walker.Info.sw.count_cases {
-				return false
-			}
 			var orig = walker.Info.builder.GetInsertBlock()
 			var fn = orig.Parent()
 
 			var cond_bb = llvm.AddBasicBlock(fn, "")
-			var body_bb = llvm.AddBasicBlock(fn, "")
-			var merge_bb = llvm.AddBasicBlock(fn, "")
-
-			walker.Info.builder.CreateBr(cond_bb)
-
+			if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
+				walker.Info.builder.CreateBr(cond_bb)
+			}
 			walker.Info.builder.SetInsertPoint(cond_bb, cond_bb.FirstInstruction())
 			var cond = ast.WalkAst(e.Cond, walker, ctx).(llvm.Value)
+
+			var body_bb = llvm.AddBasicBlock(fn, "")
+			var merge_bb = llvm.AddBasicBlock(fn, "")
+			PushLabel(merge_bb)
 			walker.Info.builder.CreateCondBr(cond, body_bb, merge_bb)
 
 			walker.Info.builder.SetInsertPoint(body_bb, body_bb.FirstInstruction())
@@ -727,38 +755,45 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				walker.Info.builder.CreateBr(cond_bb)
 			}
 
+			PopLabel()
 			walker.Info.builder.SetInsertPoint(merge_bb, merge_bb.LastInstruction())
 			return false
 		}
 		return true
 	}
 	walker.WalkDoStmt = func(ws ast.WalkStage, e *ast.DoStmt, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return true
+		}
 		if ws == ast.WalkerPropagate {
-			if walker.Info.sw.count_cases {
-				return true
-			}
 			var orig = walker.Info.builder.GetInsertBlock()
 			var fn = orig.Parent()
 
-			var body_bb = llvm.AddBasicBlock(fn, "do")
+			// cond_bb should create before body travesal, so break stmt inside body can use this
+			// as jump-out label
 			var cond_bb = llvm.AddBasicBlock(fn, "")
-			var merge_bb = llvm.AddBasicBlock(fn, "")
-
-			walker.Info.builder.CreateBr(body_bb)
-
-			walker.Info.builder.SetInsertPoint(cond_bb, cond_bb.FirstInstruction())
-			var cond = ast.WalkAst(e.Cond, walker, ctx).(llvm.Value)
-			walker.Info.builder.CreateCondBr(cond, body_bb, merge_bb)
-
+			PushLabel(cond_bb)
+			var body_bb = llvm.AddBasicBlock(fn, "do")
+			if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
+				walker.Info.builder.CreateBr(body_bb)
+			}
 			walker.Info.builder.SetInsertPoint(body_bb, body_bb.FirstInstruction())
 			if e.Body != nil {
 				ast.WalkAst(e.Body, walker, ctx)
 			}
+
 			orig = walker.Info.builder.GetInsertBlock()
+			cond_bb.MoveAfter(orig)
 			if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
 				walker.Info.builder.CreateBr(cond_bb)
 			}
+			walker.Info.builder.SetInsertPoint(cond_bb, cond_bb.FirstInstruction())
+			var cond = ast.WalkAst(e.Cond, walker, ctx).(llvm.Value)
 
+			var merge_bb = llvm.AddBasicBlock(fn, "")
+			walker.Info.builder.CreateCondBr(cond, body_bb, merge_bb)
+
+			PopLabel()
 			walker.Info.builder.SetInsertPoint(merge_bb, merge_bb.LastInstruction())
 			return false
 		}
@@ -766,10 +801,10 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkIfStmt = func(ws ast.WalkStage, e *ast.IfStmt, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return true
+		}
 		if ws == ast.WalkerPropagate {
-			if walker.Info.sw.count_cases {
-				return false
-			}
 			var orig = walker.Info.builder.GetInsertBlock()
 			var fn = orig.Parent()
 
@@ -810,10 +845,10 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		}
 	}
 	walker.WalkForStmt = func(ws ast.WalkStage, e *ast.ForStmt, ctx *ast.WalkContext) bool {
+		if walker.Info.sw.count_cases {
+			return true
+		}
 		if ws == ast.WalkerPropagate {
-			if walker.Info.sw.count_cases {
-				return false
-			}
 			Append(llvm.Value{}) // nil value as delim
 
 			var orig = walker.Info.builder.GetInsertBlock()
@@ -858,6 +893,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkCompoundStmt = func(ws ast.WalkStage, e *ast.CompoundStmt, ctx *ast.WalkContext) {
+		if walker.Info.sw.count_cases {
+			return
+		}
 		if ws == ast.WalkerPropagate {
 			Append(llvm.Value{}) // nil value as delim
 		} else {

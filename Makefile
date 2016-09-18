@@ -1,4 +1,4 @@
-GOPATH=$(shell pwd)
+GOPATH=$(shell pwd):$(HOME)/go
 target = sc
 
 DEPS := $(fileglob *.go)

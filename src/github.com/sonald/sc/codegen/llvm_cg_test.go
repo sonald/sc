@@ -5,12 +5,11 @@ import (
 	"github.com/sonald/sc/ast"
 	"github.com/sonald/sc/parser"
 	"github.com/sonald/sc/sema"
-	"unsafe"
-	//"github.com/sonald/sc/util"
 	"llvm.org/llvm/bindings/go/llvm"
 	"os"
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 func testTemplate(t *testing.T, text string, args []llvm.GenericValue, expect uint64,
@@ -131,7 +130,7 @@ int main() {
 	return ret;
 }
 `
-	const expect = 42
+	const expect = 41
 	testTemplate(t, text, nil, expect, nil)
 }
 
@@ -154,7 +153,7 @@ int main() {
 	return ret;
 }
 `
-	const expect = 42
+	const expect = 41
 	testTemplate(t, text, nil, expect, nil)
 }
 
@@ -277,6 +276,73 @@ int main(int arg) {
 	}
 	testTemplate(t, text, nil, 0, run)
 }
+
+func TestSimple9(t *testing.T) {
+	// test break
+	var text = `
+int foo() {
+	int i = 2, j = 3;
+	while (j-- > 0) {
+		switch (i) {
+			case 1: 
+				case 2: break;
+			case 3:
+				default: 
+					break;
+		}
+
+	}
+
+	return j;
+}
+
+int bar() {
+	int i = 3, j = 3;
+	switch (i) {
+		case 1: 
+			case 2:
+				while (j-- > 0) {
+					break;
+					case 3:
+						default: 
+							break;
+				}
+
+	}
+
+	return j;
+}
+
+int main(int argc)
+{
+	if (argc == 0) 
+		return foo();
+	else
+		return bar();
+
+    return 0;
+}
+
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		for i := 0; i < 2; i++ {
+			var args = []llvm.GenericValue{
+				llvm.NewGenericValueFromInt(llvm.Int32Type(), uint64(i), false),
+			}
+			var expect = -1
+			if i == 1 {
+				expect = 3
+			}
+			ret := engine.RunFunction(mod.NamedFunction("main"), args)
+			if ret.Int(true) != uint64(expect) {
+				t.Errorf("wrong answer for arg %d: expect %d, ret %d", i, expect, ret.Int(true))
+			}
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
