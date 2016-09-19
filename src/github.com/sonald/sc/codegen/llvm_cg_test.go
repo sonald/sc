@@ -24,7 +24,7 @@ func testTemplate(t *testing.T, text string, args []llvm.GenericValue, expect ui
 	top := p.Parse(&opts)
 
 	sema.RunWalkers(top)
-	p.DumpAst()
+	//p.DumpAst()
 	sema.DumpReports()
 
 	if len(sema.Reports) > 0 {
@@ -35,7 +35,7 @@ func testTemplate(t *testing.T, text string, args []llvm.GenericValue, expect ui
 		t.Errorf("parse failed")
 	} else {
 		mod := ast.WalkAst(top, MakeLLVMCodeGen()).(llvm.Module)
-		llvm.VerifyModule(mod, llvm.PrintMessageAction)
+		llvm.VerifyModule(mod, llvm.AbortProcessAction)
 
 		if engine, err := llvm.NewExecutionEngine(mod); err == nil {
 			if run != nil {
@@ -337,6 +337,46 @@ int main(int argc)
 			if ret.Int(true) != uint64(expect) {
 				t.Errorf("wrong answer for arg %d: expect %d, ret %d", i, expect, ret.Int(true))
 			}
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
+
+func TestSimple10(t *testing.T) {
+	//test nested switch statements
+	var text = `
+int foo() {
+    int i = 1, j = 4, k = 4;
+    switch (i) {
+        case 1: 
+            k--;
+        case 2:
+            k--;
+            switch (j) {
+                case 3:
+                    k--;
+                case 4:
+                    k--;
+                default: 
+                    break;
+            }
+        default: 
+            break;
+    }
+    return k;
+}
+
+int main()
+{
+    return foo();
+}
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		var expect = 1
+		ret := engine.RunFunction(mod.NamedFunction("main"), nil)
+		if ret.Int(true) != uint64(expect) {
+			t.Errorf("wrong answer: expect %d, ret %d", expect, ret.Int(true))
 		}
 
 	}

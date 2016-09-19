@@ -74,6 +74,15 @@ func symbolTy2llvmType(st ast.SymbolType) (ret llvm.Type) {
 }
 
 func MakeLLVMCodeGen() ast.AstWalker {
+	type SwitchState struct {
+		switch_val  llvm.Value // if non-nil, inside switch statement
+		default_bb  llvm.BasicBlock
+		cases       []llvm.BasicBlock
+		count_cases bool // if true, count cases recursively
+		num_cases   int
+		has_default bool
+		Next        *SwitchState
+	}
 
 	type Info struct {
 		Mod     llvm.Module
@@ -82,14 +91,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		top     *ast.TranslationUnit
 		symbols []llvm.Value      // in order
 		breaks  []llvm.BasicBlock // stack of targets for `break` statement
-		sw      struct {
-			switch_val  llvm.Value // if non-nil, inside switch statement
-			default_bb  llvm.BasicBlock
-			cases       []llvm.BasicBlock
-			count_cases bool // if true, count cases recursively
-			num_cases   int
-			has_default bool
-		}
+		sw      *SwitchState      // the innermost of switch states
 	}
 
 	var walker struct {
@@ -189,6 +191,27 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return walker.Info.breaks[len(walker.Info.breaks)-1]
 	}
 
+	var PushSwitchState = func() *SwitchState {
+		var ss = &SwitchState{}
+
+		ss.Next = walker.Info.sw
+		walker.Info.sw = ss
+		return ss
+	}
+
+	var PopSwitchState = func() {
+		if walker.Info.sw != nil {
+			walker.Info.sw = walker.Info.sw.Next
+		}
+	}
+
+	var InSwitchCaseCounting = func() bool {
+		if walker.Info.sw != nil && walker.Info.sw.count_cases {
+			return true
+		}
+		return false
+	}
+
 	walker.WalkTranslationUnit = func(ws ast.WalkStage, tu *ast.TranslationUnit, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
 			util.Printf("generated code\n")
@@ -224,7 +247,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 
 	walker.WalkBinaryOperation = func(ws ast.WalkStage, e *ast.BinaryOperation, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return false
 		}
 		if ws == ast.WalkerPropagate {
@@ -462,7 +485,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 
 	walker.WalkBreakStmt = func(ws ast.WalkStage, e *ast.BreakStmt, ctx *ast.WalkContext) {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return
 		}
 		if ws == ast.WalkerPropagate {
@@ -512,7 +535,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		}
 	}
 	walker.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return false
 		}
 		if ws == ast.WalkerBubbleUp {
@@ -578,13 +601,13 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		}
 	}
 	walker.WalkDeclStmt = func(ws ast.WalkStage, e *ast.DeclStmt, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return false
 		}
 		return true
 	}
 	walker.WalkExprStmt = func(ws ast.WalkStage, e *ast.ExprStmt, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return false
 		}
 		if ws == ast.WalkerPropagate {
@@ -601,7 +624,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 	walker.WalkCaseStmt = func(ws ast.WalkStage, e *ast.CaseStmt, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
-			if walker.Info.sw.count_cases {
+			if InSwitchCaseCounting() {
 				walker.Info.sw.num_cases++
 				return true
 
@@ -632,7 +655,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 	walker.WalkDefaultStmt = func(ws ast.WalkStage, e *ast.DefaultStmt, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
-			if walker.Info.sw.count_cases {
+			if InSwitchCaseCounting() {
 				walker.Info.sw.has_default = true
 			} else {
 				if !walker.Info.sw.has_default {
@@ -641,6 +664,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 				var orig = walker.Info.builder.GetInsertBlock()
 				walker.Info.sw.default_bb.MoveAfter(orig)
+				if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
+					walker.Info.builder.CreateBr(walker.Info.sw.default_bb)
+				}
 
 				walker.Info.builder.SetInsertPoint(walker.Info.sw.default_bb,
 					walker.Info.sw.default_bb.FirstInstruction())
@@ -654,7 +680,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkReturnStmt = func(ws ast.WalkStage, e *ast.ReturnStmt, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return false
 		}
 		if ws == ast.WalkerBubbleUp {
@@ -669,9 +695,15 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkSwitchStmt = func(ws ast.WalkStage, e *ast.SwitchStmt, ctx *ast.WalkContext) bool {
+		if InSwitchCaseCounting() {
+			return false
+		}
+
 		if ws == ast.WalkerPropagate {
 			var orig = walker.Info.builder.GetInsertBlock()
 			var fn = orig.Parent()
+
+			PushSwitchState()
 
 			walker.Info.sw.count_cases = true
 			log("SwitchStmt collecting  cases\n")
@@ -695,6 +727,10 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 			walker.Info.builder.SetInsertPoint(cond_bb, cond_bb.FirstInstruction())
 			var cond = ast.WalkAst(e.Cond, walker, ctx).(llvm.Value)
+
+			for cond.Type().TypeKind() == llvm.PointerTypeKind {
+				cond = walker.Info.builder.CreateLoad(cond, "")
+			}
 			if default_bb.IsNil() {
 				walker.Info.sw.switch_val = walker.Info.builder.CreateSwitch(cond, end_bb,
 					walker.Info.sw.num_cases)
@@ -714,19 +750,13 @@ func MakeLLVMCodeGen() ast.AstWalker {
 			walker.Info.builder.SetInsertPoint(end_bb, end_bb.LastInstruction())
 			PopLabel()
 
-			//clear sw
-			walker.Info.sw.switch_val = llvm.Value{}
-			walker.Info.sw.has_default = false
-			walker.Info.sw.count_cases = false
-			walker.Info.sw.num_cases = 0
-			walker.Info.sw.default_bb = llvm.BasicBlock{}
-			walker.Info.sw.cases = nil
+			PopSwitchState()
 			return false
 		}
 		return true
 	}
 	walker.WalkWhileStmt = func(ws ast.WalkStage, e *ast.WhileStmt, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return true
 		}
 		if ws == ast.WalkerPropagate {
@@ -762,7 +792,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkDoStmt = func(ws ast.WalkStage, e *ast.DoStmt, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return true
 		}
 		if ws == ast.WalkerPropagate {
@@ -801,7 +831,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkIfStmt = func(ws ast.WalkStage, e *ast.IfStmt, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return true
 		}
 		if ws == ast.WalkerPropagate {
@@ -845,7 +875,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		}
 	}
 	walker.WalkForStmt = func(ws ast.WalkStage, e *ast.ForStmt, ctx *ast.WalkContext) bool {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return true
 		}
 		if ws == ast.WalkerPropagate {
@@ -893,7 +923,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkCompoundStmt = func(ws ast.WalkStage, e *ast.CompoundStmt, ctx *ast.WalkContext) {
-		if walker.Info.sw.count_cases {
+		if InSwitchCaseCounting() {
 			return
 		}
 		if ws == ast.WalkerPropagate {
