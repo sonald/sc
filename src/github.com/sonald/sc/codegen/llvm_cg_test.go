@@ -24,7 +24,7 @@ func testTemplate(t *testing.T, text string, args []llvm.GenericValue, expect ui
 	top := p.Parse(&opts)
 
 	sema.RunWalkers(top)
-	//p.DumpAst()
+	p.DumpAst()
 	sema.DumpReports()
 
 	if len(sema.Reports) > 0 {
@@ -377,6 +377,53 @@ int main()
 		ret := engine.RunFunction(mod.NamedFunction("main"), nil)
 		if ret.Int(true) != uint64(expect) {
 			t.Errorf("wrong answer: expect %d, ret %d", expect, ret.Int(true))
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
+
+func TestSimple11(t *testing.T) {
+	//test goto's
+	var text = `
+int foo(int n) {
+	int k = 0;
+    int l = 1;
+	switch(n) {
+	case 1: {
+		k++;
+		goto _half;
+	}
+	case 2: k++;
+_half:
+	case 3: k++;
+	case 4: {
+		k++;
+        if (l-- < 0) {
+            break;
+        }
+        goto _half;
+	}
+	}
+
+    return k;
+}
+
+int main(int arg)
+{
+    return foo(arg);
+}
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		var expects = []int{7, 7, 6, 5}
+		for i := 1; i < 5; i++ {
+			var args = []llvm.GenericValue{
+				llvm.NewGenericValueFromInt(llvm.Int32Type(), uint64(i), false),
+			}
+			ret := engine.RunFunction(mod.NamedFunction("main"), args)
+			if ret.Int(true) != uint64(expects[i-1]) {
+				t.Errorf("wrong answer: expect %d, ret %d", expects[i-1], ret.Int(true))
+			}
 		}
 
 	}
