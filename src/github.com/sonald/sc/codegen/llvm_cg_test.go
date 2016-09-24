@@ -525,6 +525,76 @@ int main(int arg)
 	testTemplate(t, text, nil, 0, run)
 }
 
+func TestSimple13(t *testing.T) {
+	var text = `
+
+int foo(int n) {
+    int a[5];
+    for (int i = 0; i < 5; i++) {
+        a[i] = i*i;
+    }
+	return a[n];
+}
+
+int main(int arg)
+{
+    return foo(arg);
+}
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		var expects = []int{0, 1, 4, 9, 16}
+		for i := 0; i < 5; i++ {
+			var args = []llvm.GenericValue{
+				llvm.NewGenericValueFromInt(llvm.Int32Type(), uint64(i), false),
+			}
+			ret := engine.RunFunction(mod.NamedFunction("main"), args)
+			if ret.Int(true) != uint64(expects[i]) {
+				t.Errorf("wrong answer for %d: expect %d, ret %d", i, expects[i-1], int(ret.Int(true)))
+			}
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
+
+func TestSimple14(t *testing.T) {
+	var text = `
+
+int foo(int n) {
+    int a[5][6];
+    for (int i = 0; i < 5; i++) {
+		for (int j = 0; j < 6; j++) {
+			a[i][j] = i*j;
+		}
+    }
+
+    int k, ret = 0;
+    for (k = 0; k < 5; k++) {
+        ret += a[k][n] + a[n][k];
+    }
+	return ret;
+}
+
+int main(int arg)
+{
+    return foo(arg);
+}
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		var expects = []int{0, 20, 40, 60, 80}
+		for i := 0; i < 5; i++ {
+			var args = []llvm.GenericValue{
+				llvm.NewGenericValueFromInt(llvm.Int32Type(), uint64(i), false),
+			}
+			ret := engine.RunFunction(mod.NamedFunction("main"), args)
+			if ret.Int(true) != uint64(expects[i]) {
+				t.Errorf("wrong answer for %d: expect %d, ret %d", i, expects[i-1], int(ret.Int(true)))
+			}
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

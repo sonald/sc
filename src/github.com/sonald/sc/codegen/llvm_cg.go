@@ -348,6 +348,7 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				if r.Type().TypeKind() == llvm.PointerTypeKind {
 					r = walker.Info.builder.CreateLoad(r, "")
 				}
+				log("ASSIGN: l %s, r %s\n", l.Type(), r.Type())
 				op = walker.Info.builder.CreateStore(r, l)
 
 			case lexer.COMMA:
@@ -496,15 +497,21 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkConditionalOperation = func(ws ast.WalkStage, e *ast.ConditionalOperation, ctx *ast.WalkContext) bool {
-		if ws == ast.WalkerPropagate {
-		} else {
+		if ws == ast.WalkerBubbleUp {
 		}
 		return true
 	}
 
 	walker.WalkArraySubscriptExpr = func(ws ast.WalkStage, e *ast.ArraySubscriptExpr, ctx *ast.WalkContext) bool {
-		if ws == ast.WalkerPropagate {
-		} else {
+		if ws == ast.WalkerBubbleUp {
+			var sub = ast.WalkAst(e.Sub, walker, ctx).(llvm.Value)
+			if sub.Type().TypeKind() == llvm.PointerTypeKind {
+				sub = walker.Info.builder.CreateLoad(sub, sub.Name())
+			}
+			var arr = llvm.ConstInt(llvm.Int32Type(), 0, false)
+			var pobj = ast.WalkAst(e.Target, walker, ctx).(llvm.Value)
+
+			ctx.Value = walker.Info.builder.CreateInBoundsGEP(pobj, []llvm.Value{arr, sub}, "")
 		}
 		return true
 	}
@@ -614,7 +621,6 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 	walker.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
-		} else {
 		}
 		return true
 	}
