@@ -94,7 +94,7 @@ func (self Value) AsString() string {
 }
 
 func (self Value) AsInt() int {
-	if i, err := strconv.ParseInt(self.content, 10, 32); err != nil {
+	if i, err := strconv.ParseInt(self.content, 0, 32); err != nil {
 		panic("Can not convert to int")
 	} else {
 		return int(i)

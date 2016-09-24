@@ -24,7 +24,9 @@ func testTemplate(t *testing.T, text string, args []llvm.GenericValue, expect ui
 	top := p.Parse(&opts)
 
 	sema.RunWalkers(top)
-	p.DumpAst()
+	if len(os.Getenv("DEBUG")) > 0 {
+		p.DumpAst()
+	}
 	sema.DumpReports()
 
 	if len(sema.Reports) > 0 {
@@ -111,7 +113,7 @@ int main() {
 
 	int *p = &debug;
 	int **p2 = &p;
-	return **p;
+	return **p2;
 }
 `
 	testTemplate(t, text, nil, 42, nil)
@@ -423,6 +425,99 @@ int main(int arg)
 			ret := engine.RunFunction(mod.NamedFunction("main"), args)
 			if ret.Int(true) != uint64(expects[i-1]) {
 				t.Errorf("wrong answer: expect %d, ret %d", expects[i-1], ret.Int(true))
+			}
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
+
+func TestSimple12(t *testing.T) {
+	var text = `
+int f1() {
+	int k = 42;
+	int *p = &k;
+	return !*p;
+}
+
+int f2() {
+	int a = 5, b = 1;
+	return a > 4 && ++b >= 2;
+}
+
+int f3() {
+	int a = 5;
+	return  ++a * 20 / 21 - 30 + 40 % 17;
+}
+
+int f4() {
+	int a = -2, b = 10;
+	return (a << 1) + (b >> 1) ;
+}
+
+int f5() {
+	int a = -2, b = 10;
+	return b ^ (a&0xf0) + (b|0x0f);
+}
+
+int foo(int n) {
+	int k = 42;
+	switch (n) {
+	case 1: 
+		k = f1();
+		break;
+	case 2:
+		k = f2();
+		break;
+	case 3:
+		k = f3();
+		break;
+	case 4:
+		k = f4();
+		break;
+	case 5:
+		k = f5();
+		break;
+	default:
+		k = !k;
+	}
+
+/*
+    a--+-b++;
+    kernel[2] + a;
+    add(a+b, !b++);
+    st->st_time - ~1;
+    "string";
+    a.bar(a,b);
+    a>>1;
+    b += a<<1;
+    a ^ (b | 0xee) & 0xff;
+    a>1?  ++a : b-- + 4;
+    (float)a + 2.0;
+    (float)kernel[2] / 2; 
+	int c = b[3] + a[2];
+
+	sizeof c;
+	a/sizeof c+2;
+	int sz = sizeof (struct grid {int val;});
+*/
+	return k;
+}
+
+int main(int arg)
+{
+    return foo(arg);
+}
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		var expects = []int{0, 1, -19, 1, 245}
+		for i := 1; i < 6; i++ {
+			var args = []llvm.GenericValue{
+				llvm.NewGenericValueFromInt(llvm.Int32Type(), uint64(i), false),
+			}
+			ret := engine.RunFunction(mod.NamedFunction("main"), args)
+			if ret.Int(true) != uint64(expects[i-1]) {
+				t.Errorf("wrong answer for %d: expect %d, ret %d", i, expects[i-1], int(ret.Int(true)))
 			}
 		}
 

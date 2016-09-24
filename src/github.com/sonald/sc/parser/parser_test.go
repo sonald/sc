@@ -308,6 +308,7 @@ struct compound {
 	}
 }
 
+//TODO:
 func testParseTypeCasts(t *testing.T) {
 	var text = `
 (int (*fp)[5])a;
@@ -326,6 +327,8 @@ func testParseTypeCasts(t *testing.T) {
 		}
 	}
 }
+
+//TODO:
 func testRecordDesignator(t *testing.T) {
 	var text = `
 struct grid {

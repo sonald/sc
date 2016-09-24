@@ -282,8 +282,6 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		if ws == ast.WalkerPropagate {
 			var lhs, rhs, op llvm.Value
 
-			lhs = ast.WalkAst(e.LHS, walker, ctx).(llvm.Value)
-			rhs = ast.WalkAst(e.RHS, walker, ctx).(llvm.Value)
 			//log("WalkBinaryOperation: lhs %v, rhs %v\n", lhs.Type(), rhs.Type())
 
 			var ariths = map[lexer.Kind]func(lhs, rhs llvm.Value, name string) llvm.Value{
@@ -292,6 +290,13 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				lexer.MUL:   walker.Info.builder.CreateMul,
 				lexer.DIV:   walker.Info.builder.CreateSDiv,
 				lexer.MOD:   walker.Info.builder.CreateSRem,
+			}
+			var bitops = map[lexer.Kind]func(lhs, rhs llvm.Value, name string) llvm.Value{
+				lexer.OR:     walker.Info.builder.CreateOr,
+				lexer.AND:    walker.Info.builder.CreateAnd,
+				lexer.XOR:    walker.Info.builder.CreateXor,
+				lexer.LSHIFT: walker.Info.builder.CreateShl,
+				lexer.RSHIFT: walker.Info.builder.CreateAShr,
 			}
 
 			var cmps = map[lexer.Kind]struct {
@@ -305,8 +310,12 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				lexer.NE:    {llvm.IntNE, true},
 				lexer.EQUAL: {llvm.IntEQ, true},
 			}
+
 			switch e.Op {
 			case lexer.PLUS, lexer.MINUS, lexer.MUL, lexer.DIV, lexer.MOD:
+				lhs = ast.WalkAst(e.LHS, walker, ctx).(llvm.Value)
+				rhs = ast.WalkAst(e.RHS, walker, ctx).(llvm.Value)
+
 				var l, r llvm.Value = lhs, rhs
 				if l.Type().TypeKind() == llvm.PointerTypeKind {
 					l = walker.Info.builder.CreateLoad(l, "")
@@ -318,6 +327,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				op = ariths[e.Op](l, r, "tmp")
 
 			case lexer.GREAT, lexer.GE, lexer.LESS, lexer.LE, lexer.NE, lexer.EQUAL:
+				lhs = ast.WalkAst(e.LHS, walker, ctx).(llvm.Value)
+				rhs = ast.WalkAst(e.RHS, walker, ctx).(llvm.Value)
+
 				var l, r llvm.Value = lhs, rhs
 				if l.Type().TypeKind() == llvm.PointerTypeKind {
 					l = walker.Info.builder.CreateLoad(l, "")
@@ -329,12 +341,59 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				op = walker.Info.builder.CreateICmp(cmps[e.Op].pred, l, r, "")
 
 			case lexer.ASSIGN:
+				lhs = ast.WalkAst(e.LHS, walker, ctx).(llvm.Value)
+				rhs = ast.WalkAst(e.RHS, walker, ctx).(llvm.Value)
 				var l, r llvm.Value = lhs, rhs
 
 				if r.Type().TypeKind() == llvm.PointerTypeKind {
 					r = walker.Info.builder.CreateLoad(r, "")
 				}
 				op = walker.Info.builder.CreateStore(r, l)
+
+			case lexer.COMMA:
+				lhs = ast.WalkAst(e.LHS, walker, ctx).(llvm.Value)
+				rhs = ast.WalkAst(e.RHS, walker, ctx).(llvm.Value)
+				op = rhs
+
+			case lexer.LOG_OR, lexer.LOG_AND:
+				var lhs_bb = walker.Info.builder.GetInsertBlock()
+				lhs = ast.WalkAst(e.LHS, walker, ctx).(llvm.Value)
+
+				var val, notval llvm.Value
+				if e.Op == lexer.LOG_OR {
+					val, notval = llvm.ConstInt(llvm.Int1Type(), 0, false), llvm.ConstInt(llvm.Int1Type(), 1, false)
+				} else {
+					val, notval = llvm.ConstInt(llvm.Int1Type(), 1, false), llvm.ConstInt(llvm.Int1Type(), 0, false)
+				}
+				var cmp = walker.Info.builder.CreateICmp(llvm.IntEQ, lhs, val, "")
+				var fn = walker.Info.builder.GetInsertBlock().Parent()
+				var rhs_bb = llvm.AddBasicBlock(fn, "")
+				var end_bb = llvm.AddBasicBlock(fn, "")
+
+				walker.Info.builder.CreateCondBr(cmp, rhs_bb, end_bb)
+				walker.Info.builder.SetInsertPoint(rhs_bb, rhs_bb.FirstInstruction())
+				rhs = ast.WalkAst(e.RHS, walker, ctx).(llvm.Value)
+				walker.Info.builder.CreateBr(end_bb)
+
+				walker.Info.builder.SetInsertPoint(end_bb, end_bb.FirstInstruction())
+				var phi = walker.Info.builder.CreatePHI(val.Type(), "")
+				//use const `!val` here is more optimal
+				phi.AddIncoming([]llvm.Value{notval, rhs}, []llvm.BasicBlock{lhs_bb, rhs_bb})
+				op = phi
+
+			case lexer.OR, lexer.XOR, lexer.AND, lexer.LSHIFT, lexer.RSHIFT:
+				lhs = ast.WalkAst(e.LHS, walker, ctx).(llvm.Value)
+				rhs = ast.WalkAst(e.RHS, walker, ctx).(llvm.Value)
+
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, "")
+				}
+
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, "")
+				}
+				op = bitops[e.Op](l, r, "tmp")
 
 			default:
 				panic("not implemented")
@@ -363,6 +422,29 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		if ws == ast.WalkerBubbleUp {
 			var val = ctx.Value.(llvm.Value)
 			switch e.Op {
+			case lexer.TILDE:
+				if e.Postfix {
+					panic("impossible")
+				}
+				//CreateNot is bitwise not
+				var val2 = walker.Info.builder.CreateLoad(val, val.Name())
+				ctx.Value = walker.Info.builder.CreateNot(val2, val.Name())
+
+			case lexer.NOT:
+				if e.Postfix {
+					panic("impossible")
+				}
+				var val2 = walker.Info.builder.CreateLoad(val, val.Name())
+				var cmp = walker.Info.builder.CreateICmp(llvm.IntNE, val2, llvm.ConstInt(val2.Type(), 0, false), val.Name())
+				var val3 = walker.Info.builder.CreateXor(cmp, llvm.ConstInt(llvm.Int1Type(), 1, false), "")
+				ctx.Value = walker.Info.builder.CreateZExt(val3, val2.Type(), "")
+
+			case lexer.PLUS:
+				if e.Postfix {
+					panic("impossible")
+				}
+				// do nothing
+
 			case lexer.MINUS:
 				if e.Postfix {
 					panic("impossible")
@@ -381,11 +463,11 @@ func MakeLLVMCodeGen() ast.AstWalker {
 					panic("impossible")
 				}
 				//address of
-				// do nothing
+				// do nothing, llvm've handled it
 
 			case lexer.INC, lexer.DEC:
 				if e.Postfix {
-					//FIXME: postpone side effect to sequence point
+					//TODO: postpone side effect to sequence point?
 					var val2 = walker.Info.builder.CreateLoad(val, val.Name())
 					var val3 llvm.Value
 					if e.Op == lexer.INC {
@@ -707,16 +789,40 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		}
 		return true
 	}
+
+	var doConversion = func(val llvm.Value, rty llvm.Type) llvm.Value {
+		if rty != val.Type() {
+			if val.Type().TypeKind() == llvm.IntegerTypeKind && rty.TypeKind() == llvm.IntegerTypeKind {
+				var w1, w2 = val.Type().IntTypeWidth(), rty.IntTypeWidth()
+				switch {
+				case w1 < w2:
+					val = walker.Info.builder.CreateZExt(val, rty, "")
+				case w1 > w2:
+					val = walker.Info.builder.CreateTrunc(val, rty, "")
+				}
+				return val
+			}
+
+		}
+
+		//FIXME: this is not always correct
+		if val.Type().TypeKind() == llvm.PointerTypeKind {
+			return walker.Info.builder.CreateLoad(val, "")
+		}
+
+		return val
+	}
 	walker.WalkReturnStmt = func(ws ast.WalkStage, e *ast.ReturnStmt, ctx *ast.WalkContext) bool {
 		if InSwitchCaseCounting() {
 			return false
 		}
 		if ws == ast.WalkerBubbleUp {
-
+			var fn = walker.Info.builder.GetInsertBlock().Parent()
 			var val = ctx.Value.(llvm.Value)
-			if val.Type().TypeKind() == llvm.PointerTypeKind {
-				val = walker.Info.builder.CreateLoad(val, "")
-			}
+
+			var rty = fn.Type().ElementType().ReturnType()
+			val = doConversion(val, rty)
+
 			//TODO: collect rets from all paths, and do one ret at the end of function
 			ctx.Value = walker.Info.builder.CreateRet(val)
 		}
