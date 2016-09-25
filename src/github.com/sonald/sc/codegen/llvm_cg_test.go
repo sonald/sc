@@ -595,6 +595,54 @@ int main(int arg)
 	}
 	testTemplate(t, text, nil, 0, run)
 }
+
+func TestSimple15(t *testing.T) {
+	var text = `
+
+struct Node {
+	int val;
+	struct Node *left, *right;
+};
+
+int foo(int n) {
+	struct Node n1;
+	n1.val = n;
+	n1.left = n1.right = 0;
+	return n1.val;
+}
+
+int bar(int n) {
+	struct Node n1;
+	struct Node *np = &n1;
+	np->val = n;
+	np->left = np->right = 0;
+	return np->val;
+}
+
+int main(int arg)
+{
+	if (arg > 4) {
+		return bar(arg);
+	}
+    return foo(arg);
+}
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		var expects = []int{0, 1, 2, 3, 4, 5, 6}
+		for i := 0; i < 7; i++ {
+			var args = []llvm.GenericValue{
+				llvm.NewGenericValueFromInt(llvm.Int32Type(), uint64(i), false),
+			}
+			ret := engine.RunFunction(mod.NamedFunction("main"), args)
+			if ret.Int(true) != uint64(expects[i]) {
+				t.Errorf("wrong answer for %d: expect %d, ret %d", i, expects[i-1], int(ret.Int(true)))
+			}
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
