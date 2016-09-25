@@ -531,6 +531,10 @@ int foo(int a, int b)
     int a = {1,{2,3}};
     int b[] = {1,2,3,};
 
+	x = y = 0xa;
+	x += y -= 0xb;
+    a > 0 ? b < 0 ? 1 : 0 : -1;
+
     ++a * 20 / 21 - 30 + 40 % 17;
     a--+-b++;
     kernel[2] + a;
@@ -565,8 +569,8 @@ int foo(int a, int b)
 			t.Errorf("# of arguments = %d, expect 2", len(fd.Args))
 		}
 
-		if len(fd.Body.Stmts) != 20 {
-			t.Errorf("# of statements = %d, expect 20", len(fd.Body.Stmts))
+		if len(fd.Body.Stmts) != 23 {
+			t.Errorf("# of statements = %d, expect 23", len(fd.Body.Stmts))
 		}
 
 	}

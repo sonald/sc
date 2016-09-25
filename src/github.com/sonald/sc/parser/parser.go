@@ -1312,7 +1312,7 @@ type Pred int
 type Arity int
 
 const (
-	NoAssoc Associativity = 0 << iota
+	NoAssoc Associativity = iota
 	RightAssoc
 	LeftAssoc
 )
@@ -1356,7 +1356,12 @@ func binop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 
 	p.next() // eat op
-	rhs := p.parseExpression(op.LedPred)
+	var bias = 0
+	if op.Associativity == RightAssoc {
+		bias = -1
+	}
+
+	rhs := p.parseExpression(op.LedPred + bias)
 
 	var expr = &ast.BinaryOperation{ast.Node{p.ctx, op.Token}, op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
@@ -1367,7 +1372,11 @@ func assign_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 
 	p.next() // eat op
-	rhs := p.parseExpression(op.LedPred)
+	var bias = 0
+	if op.Associativity == RightAssoc {
+		bias = -1
+	}
+	rhs := p.parseExpression(op.LedPred + bias)
 
 	var expr = &ast.CompoundAssignExpr{ast.Node{p.ctx, op.Token}, op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
@@ -1381,8 +1390,13 @@ func condop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 
 	expr.Cond = lhs
 
+	var bias = 0
+	if op.Associativity == RightAssoc {
+		bias = -1
+	}
+
 	p.next() // eat ?
-	expr.True = p.parseExpression(op.LedPred)
+	expr.True = p.parseExpression(op.LedPred + bias)
 	p.match(lexer.COLON) // eat :
 
 	expr.False = p.parseExpression(op.LedPred)
@@ -1442,6 +1456,9 @@ func member_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	var expr = &ast.MemberExpr{Node: ast.Node{p.ctx, op.Token}}
 	expr.Target = lhs
 	expr.Member = p.parseExpression(op.LedPred)
+	if op.Kind == lexer.REFERENCE {
+		expr.PointerDeref = true
+	}
 	return expr
 }
 

@@ -144,8 +144,9 @@ type ArraySubscriptExpr struct {
 // for . and ->
 type MemberExpr struct {
 	Node
-	Target Expression
-	Member Expression
+	Target       Expression
+	Member       Expression
+	PointerDeref bool // -> or .
 }
 
 type FunctionCall struct {

@@ -211,7 +211,11 @@ func MakeReferenceResolve() ast.AstWalker {
 			case CSearchRecord, CSearchRecordMember:
 				if state == CSearchRecord {
 					var isARecordWithName = func(sym *ast.Symbol) bool {
-						if _, ok := sym.Type.(*ast.RecordType); ok && sym.Name.AsString() == e.Name {
+						var ty = sym.Type
+						if _, ok := ty.(*ast.Pointer); ok {
+							ty = ty.(*ast.Pointer).Source
+						}
+						if _, ok := ty.(*ast.RecordType); ok && sym.Name.AsString() == e.Name {
 							return true
 						}
 						return false
@@ -220,7 +224,11 @@ func MakeReferenceResolve() ast.AstWalker {
 					if syms == nil {
 						addReport(ast.Error, e.Start, fmt.Sprintf(err2, e.Name))
 					} else {
-						var rdty = syms[0].Type.(*ast.RecordType)
+						var ty = syms[0].Type
+						if _, ok := ty.(*ast.Pointer); ok {
+							ty = ty.(*ast.Pointer).Source
+						}
+						var rdty = ty.(*ast.RecordType)
 						rdName = rdty.Name
 					}
 

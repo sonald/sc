@@ -93,6 +93,14 @@ int foo(int n) {
 	n1.payload = 2;
 	return n1.val;
 }
+
+int bar(int n) {
+	struct Node n1;
+	struct Node *np = &n1;
+	np->val = n;
+	np->left = np->right = 0;
+	return np->val;
+}
 `
 	top := testTemplate(t, text)
 	if top == nil {
