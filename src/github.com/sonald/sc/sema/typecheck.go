@@ -14,6 +14,7 @@ var (
 	err2      = "use of undeclared identifier '%s'"
 	err3      = "field '%s' has incomplete type '%s'"
 	err4      = "field '%s' has incomplete type '%s' (aka '%s')"
+	err5      = "no member named '%s' in '%s'"
 	Reports   []*ast.Report
 	addReport = func(kd ast.ReportKind, tk lexer.Token, desc string) {
 		Reports = append(Reports, &ast.Report{kd, tk, desc})
@@ -173,28 +174,86 @@ func MakeCheckTypes() ast.AstWalker {
 // Check all DeclRef is a ref of some of the defineds
 func MakeReferenceResolve() ast.AstWalker {
 
+	const (
+		CNormal int = iota
+		CIsFuncCall
+		CSearchRecord
+		CSearchRecordMember
+	)
+
 	var (
-		isFuncCall = false
+		state  = CNormal
+		rdName string
 	)
 
 	var referenceResolve struct {
 		WalkDeclRefExpr  func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool
 		WalkFunctionCall func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) bool
+		WalkMemberExpr   func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) bool
+	}
+
+	referenceResolve.WalkMemberExpr = func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) bool {
+		if ws == ast.WalkerPropagate {
+			state = CSearchRecord
+			ast.WalkAst(e.Target, referenceResolve, ctx)
+			state = CSearchRecordMember
+			ast.WalkAst(e.Member, referenceResolve, ctx)
+			state = CNormal
+			rdName = ""
+			return false
+		}
+		return true
 	}
 
 	referenceResolve.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
-			if sym := ctx.Scope.LookupSymbol(e.Name, ast.AnyNS); sym != nil {
-			} else {
-				if isFuncCall {
-					addReport(ast.Error, e.Start, fmt.Sprintf(err1, e.Name))
+			switch state {
+			case CSearchRecord, CSearchRecordMember:
+				if state == CSearchRecord {
+					var isARecordWithName = func(sym *ast.Symbol) bool {
+						if _, ok := sym.Type.(*ast.RecordType); ok && sym.Name.AsString() == e.Name {
+							return true
+						}
+						return false
+					}
+					var syms = ctx.Scope.LookupSymbolsBy(isARecordWithName)
+					if syms == nil {
+						addReport(ast.Error, e.Start, fmt.Sprintf(err2, e.Name))
+					} else {
+						var rdty = syms[0].Type.(*ast.RecordType)
+						rdName = rdty.Name
+					}
+
 				} else {
-					addReport(ast.Error, e.Start, fmt.Sprintf(err2, e.Name))
+					if len(rdName) > 0 {
+						util.Printf("check member %s for %s\n", e.Name, rdName)
+						var rdty = ctx.Scope.LookupNamedTypeRecursive(rdName, ast.TagNS).(*ast.RecordType)
+						var meetMember = false
+						for _, fld := range rdty.Fields {
+							if fld.Name == e.Name {
+								meetMember = true
+								break
+							}
+						}
+
+						if !meetMember {
+							addReport(ast.Error, e.Start, fmt.Sprintf(err5, e.Name, "record "+rdName))
+						}
+					}
+				}
+
+			default:
+				if sym := ctx.Scope.LookupSymbol(e.Name, ast.AnyNS); sym == nil {
+					if state == CIsFuncCall {
+						addReport(ast.Error, e.Start, fmt.Sprintf(err1, e.Name))
+					} else {
+						addReport(ast.Error, e.Start, fmt.Sprintf(err2, e.Name))
+					}
 				}
 			}
 		} else {
-			if isFuncCall {
-				isFuncCall = false
+			if state == CIsFuncCall {
+				state = CNormal
 			}
 		}
 		return true
@@ -202,7 +261,7 @@ func MakeReferenceResolve() ast.AstWalker {
 
 	referenceResolve.WalkFunctionCall = func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
-			isFuncCall = true
+			state = CIsFuncCall
 		}
 		return true
 	}

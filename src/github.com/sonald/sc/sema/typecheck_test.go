@@ -19,7 +19,7 @@ func testTemplate(t *testing.T, text string) ast.Ast {
 	p := parser.NewParser()
 	top := p.Parse(&opts)
 
-	Reports = Reports[:0]
+	Reports = nil
 	p.DumpAst()
 	return top
 }
@@ -49,6 +49,9 @@ int main(int argc, char *argv[]) {
 	} else {
 		ast.WalkAst(top, MakeReferenceResolve())
 		DumpReports()
+		if len(Reports) != 8 {
+			t.Errorf("should have 8 reports")
+		}
 	}
 }
 
@@ -61,7 +64,7 @@ int main() {
 		total += i;
 	}
 
-	return total;
+	return total2;
 }
 `
 	top := testTemplate(t, text)
@@ -70,6 +73,36 @@ int main() {
 	} else {
 		ast.WalkAst(top, MakeReferenceResolve())
 		DumpReports()
+		if len(Reports) != 1 {
+			t.Errorf("should have 1 reports")
+		}
+	}
+}
+
+func TestRefs2(t *testing.T) {
+	var text = `
+struct Node {
+	int val;
+	struct Node *left, *right;
+};
+
+int foo(int n) {
+	struct Node n1;
+	n1.val = n;
+	n2.left = n1.right = 0;
+	n1.payload = 2;
+	return n1.val;
+}
+`
+	top := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeReferenceResolve())
+		DumpReports()
+		if len(Reports) != 2 {
+			t.Errorf("should have 2 reports")
+		}
 	}
 }
 

@@ -352,6 +352,22 @@ func (scope *SymbolScope) LookupSymbol(name string, ns SymbolNamespace) *Symbol 
 	return nil
 }
 
+type SymbolPredicate func(*Symbol) bool
+
+func (scope *SymbolScope) LookupSymbolsBy(predicate SymbolPredicate) (ret []*Symbol) {
+	var current = scope
+
+	for ; current != nil; current = current.Parent {
+		for _, sym := range current.Symbols {
+			if predicate(sym) {
+				ret = append(ret, sym)
+			}
+		}
+	}
+
+	return
+}
+
 //FIXME: record and typedef are two distinct name spaces
 func (scope *SymbolScope) RegisterNamedType(st SymbolType) {
 	var (
@@ -392,6 +408,17 @@ func (scope *SymbolScope) RegisterNamedType(st SymbolType) {
 	} else {
 		scope.types = append(scope.types, st)
 	}
+}
+
+func (scope *SymbolScope) LookupNamedTypeRecursive(name string, ns SymbolNamespace) SymbolType {
+	var current = scope
+
+	for ; current != nil; current = current.Parent {
+		if ty := current.LookupNamedType(name, ns); ty != nil {
+			return ty
+		}
+	}
+	return nil
 }
 
 func (scope *SymbolScope) LookupNamedType(name string, ns SymbolNamespace) SymbolType {

@@ -1717,14 +1717,7 @@ func (self *Parser) AddNamedType(st ast.SymbolType) {
 }
 
 func (self *Parser) LookupNamedType(name string, ns ast.SymbolNamespace) ast.SymbolType {
-	var current = self.currentScope
-
-	for ; current != nil; current = current.Parent {
-		if ty := current.LookupNamedType(name, ns); ty != nil {
-			return ty
-		}
-	}
-	return nil
+	return self.currentScope.LookupNamedTypeRecursive(name, ns)
 }
 
 func (self *Parser) LookupTypedef(name string) ast.SymbolType {
