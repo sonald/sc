@@ -33,3 +33,7 @@ fill 3 into []
 + [ ] lvalue check
 + [ ] all DeclRefExpr ref to defined variable
 + [ ] reserved keyword are not used as ID
++ [ ] implicit conversion
+    this need castnode to be inserted and do type inference for expression.
+    what about type of expression for varadic function argument at call-site?
+    e.g `printf("%d\n", str[i] + str2[j])`, how to determine type of `str[i]+str2[j]`

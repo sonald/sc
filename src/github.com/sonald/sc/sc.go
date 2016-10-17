@@ -16,6 +16,7 @@ var (
 	beVerbose  bool = false
 	dumpTokens bool = false
 	dumpAst    bool = false
+	dumpLLVM   bool = false
 	justRun    bool = false
 )
 
@@ -23,6 +24,7 @@ func setupFlags() {
 	flag.BoolVar(&beVerbose, "verbose", beVerbose, "increase debug output")
 	flag.BoolVar(&dumpTokens, "dump-tokens", dumpTokens, "dump tokens scanned")
 	flag.BoolVar(&dumpAst, "dump-ast", dumpAst, "dump ast parsed")
+	flag.BoolVar(&dumpLLVM, "dump-llvm", dumpLLVM, "dump ast parsed")
 	flag.BoolVar(&justRun, "run", justRun, "run code")
 }
 
@@ -47,10 +49,14 @@ func parse(opts *parser.ParseOption) bool {
 	mod := ast.WalkAst(tu, codegen.MakeLLVMCodeGen()).(llvm.Module)
 	llvm.VerifyModule(mod, llvm.PrintMessageAction)
 
+	if dumpLLVM {
+		mod.Dump()
+	}
+
 	if justRun {
 		if engine, err := llvm.NewExecutionEngine(mod); err == nil {
 			ret := engine.RunFunction(mod.NamedFunction("main"), nil)
-			fmt.Print(ret.Int(true))
+			fmt.Printf("%d\n", ret.Int(true))
 		} else {
 			fmt.Fprintf(os.Stderr, err.Error())
 			return false

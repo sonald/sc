@@ -37,6 +37,9 @@ func testTemplate(t *testing.T, text string, args []llvm.GenericValue, expect ui
 		t.Errorf("parse failed")
 	} else {
 		mod := ast.WalkAst(top, MakeLLVMCodeGen()).(llvm.Module)
+		if len(os.Getenv("DEBUG")) > 0 {
+			mod.Dump()
+		}
 		llvm.VerifyModule(mod, llvm.AbortProcessAction)
 
 		if engine, err := llvm.NewExecutionEngine(mod); err == nil {
@@ -636,6 +639,31 @@ int main(int arg)
 			ret := engine.RunFunction(mod.NamedFunction("main"), args)
 			if ret.Int(true) != uint64(expects[i]) {
 				t.Errorf("wrong answer for %d: expect %d, ret %d", i, expects[i-1], int(ret.Int(true)))
+			}
+		}
+
+	}
+	testTemplate(t, text, nil, 0, run)
+}
+
+func TestSimple16(t *testing.T) {
+	var text = `
+int main(int arg)
+{
+	char* str = "hello";
+	char str2[6] = "world";
+	return str[arg] + str2[arg];
+}
+`
+	var run = func(mod llvm.Module, engine llvm.ExecutionEngine) {
+		var expects = []int{223, 212, 222, 216, 211}
+		for i := 0; i < 5; i++ {
+			var args = []llvm.GenericValue{
+				llvm.NewGenericValueFromInt(llvm.Int32Type(), uint64(i), false),
+			}
+			ret := engine.RunFunction(mod.NamedFunction("main"), args)
+			if ret.Int(true) != uint64(expects[i]) {
+				t.Errorf("wrong answer for %d: expect %d, ret %d", i, expects[i], int(ret.Int(true)))
 			}
 		}
 
