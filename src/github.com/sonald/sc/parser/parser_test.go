@@ -187,7 +187,10 @@ typedef int size_t;
 size_t sz = 2;
 
 int unsigned typedef * const *grid_t[2];
-grid_t grid;
+const grid_t grid;
+
+typedef char* pchar;
+const pchar p1 = "hello";
 
 int typedef (*designator)(int ,int); 
 
@@ -221,10 +224,10 @@ color_t clr3 = red;
 			t.Errorf("failed to parse some enums")
 		}
 
-		if vd != 7 {
+		if vd != 8 {
 			t.Errorf("failed to parse some vars")
 		}
-		if td != 8 {
+		if td != 9 {
 			t.Errorf("failed to parse some typedefs")
 		}
 	}
