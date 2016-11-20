@@ -3,6 +3,7 @@ package ast
 import (
 	"fmt"
 	"github.com/sonald/sc/lexer"
+	"reflect"
 	"strings"
 )
 
@@ -67,6 +68,39 @@ func isSimpleType(s SymbolType) bool {
 	}
 }
 
+func TypeAssertEq(real, expected SymbolType, msg string) {
+	if !IsTypeEq(real, expected) {
+		panic(msg)
+	}
+}
+
+func TypeAssertCompat(real, expected SymbolType, msg string) {
+	if !IsTypeCompat(real, expected) {
+		panic(msg)
+	}
+}
+
+func IsTypeEq(real, expected SymbolType) bool {
+	var t1, t2 = reflect.TypeOf(real).Elem(), reflect.TypeOf(expected).Elem()
+	if t1.Name() == "IntegerType" && t2.Name() == "IntegerType" {
+		var i1, i2 = real.(*IntegerType), expected.(*IntegerType)
+		return i1.Kind == i2.Kind && i1.Unsigned == i2.Unsigned
+	} else if t1.Name() == "Pointer" && t2.Name() == "Pointer" {
+		return IsTypeEq(real.(*Pointer).Source, expected.(*Pointer).Source)
+	}
+	return t1.Name() == t2.Name()
+}
+
+func IsTypeCompat(real, expected SymbolType) bool {
+	var t1, t2 = reflect.TypeOf(real).Elem(), reflect.TypeOf(expected).Elem()
+	if t1.Name() == "Pointer" && t2.Name() == "Pointer" {
+		return IsTypeCompat(real.(*Pointer).Source, expected.(*Pointer).Source)
+	} else if t1.Name() == "IntegerType" && t2.Name() == "IntegerType" {
+		return true
+	}
+	return t1.Name() == t2.Name()
+}
+
 // decorate base type with qualifier
 type QualifiedType struct {
 	Base SymbolType
@@ -108,6 +142,13 @@ type FloatType struct {
 
 func (i *FloatType) String() string {
 	return "float"
+}
+
+type StringType struct {
+}
+
+func (s *StringType) String() string {
+	return "string"
 }
 
 type DoubleType struct {

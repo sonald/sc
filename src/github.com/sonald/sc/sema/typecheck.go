@@ -118,7 +118,7 @@ func MakeCheckLoop() ast.AstWalker {
 	return CheckLoop
 }
 
-// check types, type match
+// check types, type match, type conversion
 func MakeCheckTypes() ast.AstWalker {
 	var CheckTypes struct {
 		WalkIntLiteralExpr       func(ws ast.WalkStage, e *ast.IntLiteralExpr, ctx *ast.WalkContext)
@@ -130,43 +130,374 @@ func MakeCheckTypes() ast.AstWalker {
 		WalkSizeofExpr           func(ws ast.WalkStage, e *ast.SizeofExpr, ctx *ast.WalkContext)
 		WalkConditionalOperation func(ws ast.WalkStage, e *ast.ConditionalOperation, ctx *ast.WalkContext)
 		WalkArraySubscriptExpr   func(ws ast.WalkStage, e *ast.ArraySubscriptExpr, ctx *ast.WalkContext)
-		WalkMemberExpr           func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext)
+		WalkMemberExpr           func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) bool
 		WalkFunctionCall         func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext)
 		WalkCompoundAssignExpr   func(ws ast.WalkStage, e *ast.CompoundAssignExpr, ctx *ast.WalkContext)
 		WalkCastExpr             func(ws ast.WalkStage, e *ast.CastExpr, ctx *ast.WalkContext)
 		WalkCompoundLiteralExpr  func(ws ast.WalkStage, e *ast.CompoundLiteralExpr, ctx *ast.WalkContext)
 		WalkInitListExpr         func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext)
+		WalkImplicitCastExpr     func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext)
+		WalkVariableDecl         func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext)
+		info                     struct{ SearchNS ast.SymbolNamespace }
+	}
+
+	CheckTypes.info = struct{ SearchNS ast.SymbolNamespace }{ast.OrdinaryNS}
+
+	CheckTypes.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			sym := ctx.Scope.LookupSymbol(e.Sym, ast.OrdinaryNS)
+			e.InferedType = sym.Type
+			if e.Init != nil && !ast.IsTypeEq(sym.Type, e.Init.GetType()) {
+				e.Init = &ast.ImplicitCastExpr{e.Node, ast.IntegralCast, sym.Type, e.Init}
+			}
+		}
 	}
 
 	CheckTypes.WalkIntLiteralExpr = func(ws ast.WalkStage, e *ast.IntLiteralExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = &ast.IntegerType{false, "int"}
+		}
 	}
 	CheckTypes.WalkCharLiteralExpr = func(ws ast.WalkStage, e *ast.CharLiteralExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = &ast.IntegerType{false, "char"}
+		}
 	}
 	CheckTypes.WalkStringLiteralExpr = func(ws ast.WalkStage, e *ast.StringLiteralExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = &ast.StringType{}
+		}
 	}
+
+	// typedef's are handled elsewhere
+
+	var promoteNode = func(expr ast.Expression, nd *ast.Node) ast.Expression {
+		var ty = expr.GetType()
+		if it, yes := ty.(*ast.IntegerType); yes {
+			if it.Kind == "char" || it.Kind == "short" {
+				var e = &ast.ImplicitCastExpr{}
+				e.Node = *nd
+				e.CastKind = ast.IntegralCast
+				e.DestType = &ast.IntegerType{false, "int"}
+				e.Expr = expr
+				e.InferedType = expr.GetType()
+				return e
+			}
+		}
+		return expr
+	}
+
+	var unifyType = func(type1, type2 ast.SymbolType) (unified_ty ast.SymbolType, unified bool) {
+		unified = true
+		var t1, t2 = reflect.TypeOf(type1).Elem(), reflect.TypeOf(type2).Elem()
+		if t1.Name() == "Pointer" || t2.Name() == "Pointer" {
+			unified = false
+
+		} else if t1.Name() == "DoubleType" || t2.Name() == "DoubleType" {
+			if t2.Name() == "DoubleType" {
+				type1, type2 = type2, type1
+			}
+			switch type2.(type) {
+			case *ast.IntegerType, *ast.FloatType, *ast.DoubleType:
+				unified_ty = &ast.DoubleType{}
+			default:
+				unified = false
+			}
+
+		} else if t1.Name() == "FloatType" || t2.Name() == "FloatType" {
+			if t2.Name() == "FloatType" {
+				type1, type2 = type2, type1
+			}
+			switch type2.(type) {
+			case *ast.IntegerType, *ast.FloatType:
+				unified_ty = &ast.FloatType{}
+			default:
+				unified = false
+			}
+
+		} else if t1.Name() == "IntegerType" && t2.Name() == "IntegerType" {
+			var i1, i2 = type1.(*ast.IntegerType), type2.(*ast.IntegerType)
+
+			// this is not the rank of C type, but more like privileges
+			var ranks = map[string]int{
+				"unsigned long long": 10,
+				"long long":          9,
+				"unsigned long":      8,
+				"long":               7,
+				"unsigned int":       6,
+				"int":                5,
+				// these below won't be used due to promotion
+				"unsigned short": 4,
+				"short":          3,
+				"unsigned char":  2,
+				"char":           1,
+			}
+
+			if i1.Kind == i2.Kind && i1.Unsigned == i2.Unsigned {
+				unified_ty = type1
+
+			} else {
+				var ts1, ts2 = i1.String(), i2.String()
+				if ranks[ts1] > ranks[ts2] {
+					unified_ty = type1
+				} else if ranks[ts1] < ranks[ts2] {
+					unified_ty = type2
+				}
+			}
+
+		} else {
+			unified = false
+		}
+		return
+	}
+
+	var usualArithmeticConversion = func(node ast.Node, op lexer.Kind, lhs ast.Expression, rhs ast.Expression) (ast.Expression, ast.Expression, ast.SymbolType) {
+		var lty, rty = lhs.GetType(), rhs.GetType()
+
+		if ast.IsTypeEq(lty, rty) {
+			return lhs, rhs, lty
+		}
+
+		var ty, unified = unifyType(lty, rty)
+		if !unified {
+			panic("invalid type for binary operation")
+		}
+
+		if !ast.IsTypeEq(lty, ty) {
+			lhs = &ast.ImplicitCastExpr{node, ast.IntegralCast, ty, lhs}
+		}
+
+		if !ast.IsTypeEq(rty, ty) {
+			rhs = &ast.ImplicitCastExpr{node, ast.IntegralCast, ty, rhs}
+		}
+
+		return lhs, rhs, ty
+	}
+
+	var checkPointerArithmetic = func(bop *ast.BinaryOperation) bool {
+		var lty, rty = bop.LHS.GetType(), bop.RHS.GetType()
+		var t1, t2 = reflect.TypeOf(lty).Elem(), reflect.TypeOf(rty).Elem()
+		if t1.Name() == "Pointer" || t2.Name() == "Pointer" {
+			if t1.Name() == "Pointer" && t2.Name() == "Pointer" {
+				if bop.Op == lexer.PLUS {
+					panic("invalid operands to pointer arithmetic")
+				}
+
+				//else, pointer subtraction results into a ptrdiff_t (signed int) type
+				bop.InferedType = &ast.IntegerType{false, "int"}
+				if !ast.IsTypeEq(lty, rty) {
+					panic(fmt.Sprintf("'%s' and '%s' are not pointers to compatible types", lty, rty))
+				}
+
+			} else {
+				if t2.Name() == "Pointer" {
+					lty, rty = rty, lty
+				}
+
+				bop.InferedType = lty
+				ast.TypeAssertCompat(rty, &ast.IntegerType{}, "invalid operand to pointer arithmetic")
+			}
+			return true
+		}
+
+		return false
+	}
+
 	CheckTypes.WalkBinaryOperation = func(ws ast.WalkStage, e *ast.BinaryOperation, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			if e.Op == lexer.ASSIGN {
+				e.InferedType = e.LHS.GetType()
+				if !ast.IsTypeEq(e.LHS.GetType(), e.RHS.GetType()) {
+					e.RHS = &ast.ImplicitCastExpr{e.Node, ast.IntegralCast, e.LHS.GetType(), e.RHS}
+				}
+
+			} else if e.Op == lexer.LOG_OR || e.Op == lexer.LOG_AND {
+				e.InferedType = e.LHS.GetType()
+
+			} else if e.Op == lexer.COMMA {
+				e.InferedType = e.RHS.GetType()
+
+			} else if e.Op == lexer.LSHIFT || e.Op == lexer.RSHIFT {
+				e.LHS = promoteNode(e.LHS, &e.Node)
+				e.RHS = promoteNode(e.RHS, &e.Node)
+				e.InferedType = e.LHS.GetType()
+
+			} else {
+				if (e.Op == lexer.PLUS || e.Op == lexer.MINUS) && checkPointerArithmetic(e) {
+					return
+				}
+				e.LHS = promoteNode(e.LHS, &e.Node)
+				e.RHS = promoteNode(e.RHS, &e.Node)
+
+				var ty ast.SymbolType
+				e.LHS, e.RHS, ty = usualArithmeticConversion(e.Node, e.Op, e.LHS, e.RHS)
+				util.Printf(util.Sema, util.Debug, "unified ty %v", ty)
+				e.InferedType = ty
+
+			}
+
+		} else {
+			CheckTypes.info.SearchNS = ast.OrdinaryNS
+		}
 	}
 	CheckTypes.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			//FIXME: how to determine SearchNS
+			var sym = ctx.Scope.LookupSymbol(e.Name, CheckTypes.info.SearchNS)
+			e.InferedType = sym.Type
+		}
 	}
 	CheckTypes.WalkUnaryOperation = func(ws ast.WalkStage, e *ast.UnaryOperation, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			switch e.Op {
+			case lexer.INC, lexer.DEC:
+				e.InferedType = e.Expr.GetType()
+
+			case lexer.MINUS, lexer.PLUS:
+				e.InferedType = e.Expr.GetType()
+				ast.TypeAssertCompat(e.Expr.GetType(), &ast.IntegerType{}, "types are uncompatible")
+
+			case lexer.NOT, lexer.TILDE:
+				e.InferedType = &ast.IntegerType{false, "int"}
+				ast.TypeAssertCompat(e.Expr.GetType(), &ast.IntegerType{}, "types are uncompatible")
+
+			case lexer.AND:
+				e.InferedType = &ast.Pointer{e.Expr.GetType()}
+
+			case lexer.MUL: // pointer deref
+				var ty = e.Expr.GetType()
+				if _, ok := ty.(*ast.Pointer); !ok {
+					panic("indirection requires pointer operand")
+				} else {
+					e.InferedType = ty.(*ast.Pointer).Source
+				}
+
+			default:
+				panic("wrong unary operator")
+			}
+		} else {
+			CheckTypes.info.SearchNS = ast.OrdinaryNS
+		}
 	}
 	CheckTypes.WalkSizeofExpr = func(ws ast.WalkStage, e *ast.SizeofExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			//FIXME: this is impl-defined (now set as size_t for x86_64)
+			e.InferedType = &ast.IntegerType{true, "int"}
+		}
 	}
 	CheckTypes.WalkConditionalOperation = func(ws ast.WalkStage, e *ast.ConditionalOperation, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = e.True.GetType()
+			ast.TypeAssertEq(e.False.GetType(), e.True.GetType(), "conditional type mismatch")
+		}
 	}
 	CheckTypes.WalkArraySubscriptExpr = func(ws ast.WalkStage, e *ast.ArraySubscriptExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			var ty = e.Target.GetType()
+			if aty, yes := ty.(*ast.Array); !yes {
+				panic("target should be array type")
+			} else {
+				e.InferedType = aty.ElemType
+			}
+
+			if _, yes := e.Sub.GetType().(*ast.IntegerType); !yes {
+				panic("subscript should be integer type")
+			}
+		}
 	}
-	CheckTypes.WalkMemberExpr = func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) {
+	CheckTypes.WalkMemberExpr = func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) bool {
+		if ws == ast.WalkerPropagate {
+			if decl, yes := e.Target.(*ast.DeclRefExpr); yes {
+				var isARecordWithName = func(sym *ast.Symbol) bool {
+					var ty = sym.Type
+					if _, ok := ty.(*ast.Pointer); ok {
+						ty = ty.(*ast.Pointer).Source
+					}
+					if _, ok := ty.(*ast.RecordType); ok && sym.Name.AsString() == decl.Name {
+						return true
+					}
+					return false
+				}
+				var syms = ctx.Scope.LookupSymbolsBy(isARecordWithName)
+				if syms == nil {
+					panic("invalid record reference")
+				} else {
+					var ty = syms[0].Type
+					if _, ok := ty.(*ast.Pointer); ok {
+						ty = ty.(*ast.Pointer).Source
+					}
+					var rdty = ty.(*ast.RecordType)
+					util.Printf(util.Sema, util.Debug, "MemberExpr: found rdty %v for %s", rdty, decl.Name)
+					decl.InferedType = rdty
+				}
+			} else {
+				ast.WalkAst(e.Target, CheckTypes, ctx)
+			}
+
+			switch e.Member.(type) {
+			case *ast.DeclRefExpr:
+				var found = false
+				var decl = e.Member.(*ast.DeclRefExpr)
+				if rdty, yes := e.Target.GetType().(*ast.RecordType); yes {
+					for _, fty := range rdty.Fields {
+						if fty.Name == decl.Name {
+							decl.InferedType = fty.Base
+							e.InferedType = decl.InferedType
+							found = true
+							break
+						}
+					}
+
+					if !found {
+						panic("invalid member")
+					}
+				} else {
+					panic("invalid member reference")
+				}
+
+			default:
+				panic("invalid member reference")
+			}
+
+			return false
+		}
+		return true
 	}
 	CheckTypes.WalkFunctionCall = func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			if ty, yes := e.Func.GetType().(*ast.Function); yes {
+				e.InferedType = ty.Return
+				//FIXME: check arg type mismatches
+			} else {
+				panic("invalid function type")
+			}
+		}
 	}
 	CheckTypes.WalkCompoundAssignExpr = func(ws ast.WalkStage, e *ast.CompoundAssignExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = e.LHS.GetType()
+			ast.TypeAssertEq(e.LHS.GetType(), e.RHS.GetType(), "type mismatch")
+		}
 	}
 	CheckTypes.WalkCastExpr = func(ws ast.WalkStage, e *ast.CastExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = e.Type
+		}
 	}
 	CheckTypes.WalkCompoundLiteralExpr = func(ws ast.WalkStage, e *ast.CompoundLiteralExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = e.Type
+		}
 	}
 	CheckTypes.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = e.Inits[0].GetType()
+		}
+	}
+	CheckTypes.WalkImplicitCastExpr = func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerBubbleUp {
+			e.InferedType = e.DestType
+		}
 	}
 	return CheckTypes
 }
@@ -194,6 +525,7 @@ func MakeReferenceResolve() ast.AstWalker {
 
 	referenceResolve.WalkMemberExpr = func(ws ast.WalkStage, e *ast.MemberExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
+			//FIXME: this is wrong, state should be a stack of states
 			state = CSearchRecord
 			ast.WalkAst(e.Target, referenceResolve, ctx)
 			state = CSearchRecordMember

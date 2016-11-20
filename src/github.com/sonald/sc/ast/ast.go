@@ -9,6 +9,7 @@ import (
 
 type Ast interface {
 	Repr() string
+	Prop(name string) interface{}
 }
 
 type AstContext struct {
@@ -16,12 +17,21 @@ type AstContext struct {
 }
 
 type Node struct {
-	Ctx   *AstContext
-	Start lexer.Token // first token that initiates the corresponding ast struct
+	Ctx         *AstContext
+	Start       lexer.Token // first token that initiates the corresponding ast struct
+	InferedType SymbolType  // type inferenced or contained in Expr
 }
 
 func (n *Node) Repr() string {
 	return "#"
+}
+
+func (n *Node) Prop(name string) interface{} {
+	return nil
+}
+
+func (n *Node) GetType() SymbolType {
+	return n.InferedType
 }
 
 type TranslationUnit struct {
@@ -38,6 +48,7 @@ func (tu *TranslationUnit) Repr() string {
 // considered abstract
 type Expression interface {
 	Ast
+	GetType() SymbolType
 }
 
 type IntLiteralExpr struct {
@@ -178,6 +189,36 @@ type CompoundLiteralExpr struct {
 type InitListExpr struct {
 	Node
 	Inits []Expression
+}
+
+type CastKind int
+
+const (
+	ArrayToPointerDecay CastKind = iota
+	FunctionToPointerDecay
+	IntegralCast
+	LValueToRValueCast
+)
+
+func (ck CastKind) String() string {
+	switch ck {
+	case ArrayToPointerDecay:
+		return "ArrayToPointerDecay"
+	case FunctionToPointerDecay:
+		return "FunctionToPointerDecay"
+	case IntegralCast:
+		return "IntegralCast"
+	case LValueToRValueCast:
+		return "LValueToRValueCast"
+	}
+	return ""
+}
+
+type ImplicitCastExpr struct {
+	Node
+	CastKind
+	DestType SymbolType // for IntegralCast
+	Expr     Expression // wrapped expression
 }
 
 //--------------------------------------------------------------------------------
@@ -625,6 +666,16 @@ func WalkAst(top Ast, wk AstWalker, cont ...interface{}) interface{} {
 			}
 			visit(e.LHS)
 			visit(e.RHS)
+			if !tryCall(WalkerBubbleUp, ast) {
+				return
+			}
+
+		case *ImplicitCastExpr:
+			e := ast.(*ImplicitCastExpr)
+			if !tryCall(WalkerPropagate, ast) {
+				return
+			}
+			visit(e.Expr)
 			if !tryCall(WalkerBubbleUp, ast) {
 				return
 			}

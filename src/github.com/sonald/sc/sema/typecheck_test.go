@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func testTemplate(t *testing.T, text string) ast.Ast {
+func testTemplate(t *testing.T, text string) (ast.Ast, *parser.Parser) {
 	opts := parser.ParseOption{
 		Filename: "./test.txt",
 		Verbose:  true,
@@ -21,7 +21,7 @@ func testTemplate(t *testing.T, text string) ast.Ast {
 
 	Reports = nil
 	p.DumpAst()
-	return top
+	return top, p
 }
 
 func TestSimpleDecls(t *testing.T) {
@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
 	fclose(fp);
 }
 `
-	top := testTemplate(t, text)
+	top, _ := testTemplate(t, text)
 	if top == nil {
 		t.Errorf("parse failed")
 	} else {
@@ -67,7 +67,7 @@ int main() {
 	return total2;
 }
 `
-	top := testTemplate(t, text)
+	top, _ := testTemplate(t, text)
 	if top == nil {
 		t.Errorf("parse failed")
 	} else {
@@ -102,7 +102,7 @@ int bar(int n) {
 	return np->val;
 }
 `
-	top := testTemplate(t, text)
+	top, _ := testTemplate(t, text)
 	if top == nil {
 		t.Errorf("parse failed")
 	} else {
@@ -110,6 +110,32 @@ int bar(int n) {
 		DumpReports()
 		if len(Reports) != 2 {
 			t.Errorf("should have 2 reports")
+		}
+	}
+}
+
+func TestRefs3(t *testing.T) {
+	var text = `
+struct Grid {
+	int expand;
+	struct Node {
+		int color;
+	} *nodes;
+};
+
+int foo(int n) {
+	struct Grid g;
+	return g.nodes[n].color;
+}
+`
+	top, _ := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeReferenceResolve())
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
 		}
 	}
 }
@@ -147,7 +173,7 @@ struct node {
 	my_t left, right;
 };
 `
-	top := testTemplate(t, text)
+	top, _ := testTemplate(t, text)
 	if top == nil {
 		t.Errorf("parse failed")
 	} else {
@@ -156,6 +182,100 @@ struct node {
 			t.Errorf("some errors are not detected")
 		}
 		DumpReports()
+	}
+}
+
+func TestCheckTypes1(t *testing.T) {
+	var text = `
+int foo() {
+	char c = 'b';
+    short si = 5;
+    long l = 10;
+    unsigned short usi = si - c * 2 + l / 2;
+	return usi;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+	}
+}
+
+func TestCheckTypes2(t *testing.T) {
+	var text = `
+int foo() {
+	char *p1, *p2;
+	short s = p1 - p2;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+	}
+}
+
+func TestCheckTypes3(t *testing.T) {
+	var text = `
+int foo() {
+	char *p1, *p2;
+	short s = *++p1;
+	char c = *(p1 + (p2 - p1));
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+	}
+}
+
+func TestCheckTypes4(t *testing.T) {
+	var text = `
+struct node {
+    long val[4];
+    struct data {
+        int x, y;
+    } data[4];
+};
+
+int main()
+{
+    struct node nd;
+	nd.val[1] = nd.data[1].x + nd.data[1].y;
+    
+    return 0;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
 	}
 }
 

@@ -86,6 +86,10 @@ func (self *Parser) match(kd lexer.Kind) {
 	}
 }
 
+func (self *Parser) makeNode(tk lexer.Token) ast.Node {
+	return ast.Node{Ctx: self.ctx, Start: tk}
+}
+
 // the only entry
 func (self *Parser) Parse(opts *ParseOption) ast.Ast {
 	self.lex = lexer.NewScanner(opts.Reader)
@@ -421,7 +425,7 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 			aty.Level++
 			if tok := self.peek(0); tok.Kind == lexer.CLOSE_BRACKET {
 				// NOTE: I use -1 means don't know
-				ile := &ast.IntLiteralExpr{Node: ast.Node{self.ctx, tok}, Tok: lexer.MakeToken(lexer.INT_LITERAL, "-1")}
+				ile := &ast.IntLiteralExpr{Node: self.makeNode(tok), Tok: lexer.MakeToken(lexer.INT_LITERAL, "-1")}
 				aty.LenExprs = append(aty.LenExprs, ile)
 			} else {
 				aty.LenExprs = append(aty.LenExprs, self.parseExpression(0))
@@ -502,9 +506,9 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 
 			if nested == 1 && id != nil {
 				if isTypedef {
-					decl = &ast.TypedefDecl{Node: ast.Node{self.ctx, *id}, Sym: id.AsString()}
+					decl = &ast.TypedefDecl{Node: self.makeNode(*id), Sym: id.AsString()}
 				} else {
-					decl = &ast.VariableDecl{Node: ast.Node{self.ctx, *id}, Sym: id.AsString()}
+					decl = &ast.VariableDecl{Node: self.makeNode(*id), Sym: id.AsString()}
 				}
 			}
 
@@ -517,7 +521,7 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 			}
 
 			if nested == 1 && id != nil && idLevel == nested {
-				var fdecl = &ast.FunctionDecl{Node: ast.Node{self.ctx, *id}}
+				var fdecl = &ast.FunctionDecl{Node: self.makeNode(*id)}
 				decl = fdecl
 				fdecl.Name = id.AsString()
 				// when found definition of func, we need to chain fdecl.Scope with body
@@ -530,9 +534,9 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 				// this is just a temp scope to capture params
 				if nested == 1 && id != nil {
 					if isTypedef {
-						decl = &ast.TypedefDecl{Node: ast.Node{self.ctx, *id}, Sym: id.AsString()}
+						decl = &ast.TypedefDecl{Node: self.makeNode(*id), Sym: id.AsString()}
 					} else {
-						decl = &ast.VariableDecl{Node: ast.Node{self.ctx, *id}, Sym: id.AsString()}
+						decl = &ast.VariableDecl{Node: self.makeNode(*id), Sym: id.AsString()}
 					}
 				}
 				self.PushScope()
@@ -552,20 +556,26 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 		default:
 			if id != nil {
 				if isTypedef {
-					decl = &ast.TypedefDecl{Node: ast.Node{self.ctx, *id}, Sym: id.AsString()}
+					decl = &ast.TypedefDecl{Node: self.makeNode(*id), Sym: id.AsString()}
 				} else {
-					decl = &ast.VariableDecl{Node: ast.Node{self.ctx, *id}, Sym: id.AsString()}
+					decl = &ast.VariableDecl{Node: self.makeNode(*id), Sym: id.AsString()}
 				}
 			}
 		}
 
-		//TODO: assert nested level == 0
 		if self.peek(0).Kind == lexer.ASSIGN {
-			// parse initializer
+			// parse initializer or assignment-expr
 			self.next()
 			switch decl.(type) {
 			case *ast.VariableDecl:
-				decl.(*ast.VariableDecl).Init = self.parseInitializerList()
+				if self.peek(0).Kind == lexer.LBRACE {
+					decl.(*ast.VariableDecl).Init = self.parseInitializerList()
+				} else {
+					oldpred := operations[lexer.COMMA].LedPred
+					operations[lexer.COMMA].LedPred = -1
+					decl.(*ast.VariableDecl).Init = self.parseExpression(0)
+					operations[lexer.COMMA].LedPred = oldpred
+				}
 			default:
 				self.parseError(self.peek(0), "Initializer is not allowed here (only variables can be initialized)")
 			}
@@ -586,7 +596,7 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 		// this happens if we are parsing types only (such as func params)
 		// so make a dummy decl
 		finalSym.Name = lexer.MakeToken(lexer.IDENTIFIER, ast.NextDummyVariableName())
-		decl = &ast.VariableDecl{Node: ast.Node{self.ctx, refTok}, Sym: finalSym.Name.AsString()}
+		decl = &ast.VariableDecl{Node: self.makeNode(refTok), Sym: finalSym.Name.AsString()}
 		self.AddSymbol(&finalSym)
 	}
 
@@ -602,7 +612,7 @@ func (self *Parser) parseDeclarator(tmpl *ast.Symbol) ast.Ast {
 func (self *Parser) parseEnumType() ast.SymbolType {
 	defer self.trace("")()
 	var (
-		enumDecl  = &ast.EnumDecl{Node: ast.Node{self.ctx, self.peek(0)}}
+		enumDecl  = &ast.EnumDecl{Node: self.makeNode(self.peek(0))}
 		ret       = &ast.EnumType{}
 		enumSym   = &ast.Symbol{}
 		tok       lexer.Token
@@ -727,7 +737,7 @@ func (self *Parser) parseEnumType() ast.SymbolType {
 func (self *Parser) parseRecordType() ast.SymbolType {
 	defer self.trace("")()
 	var (
-		recDecl   = &ast.RecordDecl{Node: ast.Node{self.ctx, self.peek(0)}}
+		recDecl   = &ast.RecordDecl{Node: self.makeNode(self.peek(0))}
 		recSym    = &ast.Symbol{}
 		ret       = &ast.RecordType{}
 		tok       lexer.Token
@@ -838,7 +848,7 @@ func (self *Parser) parseRecordType() ast.SymbolType {
 				break
 			}
 
-			var fd = &ast.FieldDecl{Node: ast.Node{self.ctx, self.peek(0)}}
+			var fd = &ast.FieldDecl{Node: self.makeNode(self.peek(0))}
 			var ft = &ast.FieldType{}
 
 			if self.peek(0).Kind != lexer.COLON {
@@ -941,7 +951,7 @@ func (self *Parser) parseCompoundStmt() *ast.CompoundStmt {
 
 	var scope = self.PushScope()
 	defer func() { self.PopScope() }()
-	var compound = &ast.CompoundStmt{Node: ast.Node{self.ctx, self.peek(0)}, Scope: scope}
+	var compound = &ast.CompoundStmt{Node: self.makeNode(self.peek(0)), Scope: scope}
 	scope.Owner = compound
 
 	self.match(lexer.LBRACE)
@@ -1027,7 +1037,7 @@ func (self *Parser) parseStatement() ast.Statement {
 func (self *Parser) parseIfStatement() *ast.IfStmt {
 	defer self.trace("")()
 
-	var ifStmt = &ast.IfStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var ifStmt = &ast.IfStmt{Node: self.makeNode(self.peek(0))}
 	self.next() // eat if
 	self.match(lexer.LPAREN)
 	ifStmt.Cond = self.parseExpression(0)
@@ -1043,7 +1053,7 @@ func (self *Parser) parseIfStatement() *ast.IfStmt {
 func (self *Parser) parseSwitchStatement() *ast.SwitchStmt {
 	defer self.trace("")()
 
-	var switchStmt = &ast.SwitchStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var switchStmt = &ast.SwitchStmt{Node: self.makeNode(self.peek(0))}
 	self.next()
 	self.match(lexer.LPAREN)
 	switchStmt.Cond = self.parseExpression(0)
@@ -1053,7 +1063,7 @@ func (self *Parser) parseSwitchStatement() *ast.SwitchStmt {
 	return switchStmt
 }
 
-func (self *Parser) tolerableParse(rule func() ast.Ast, follow ...lexer.Token) (retVal ast.Ast) {
+func (self *Parser) tolerableParse(rule func() ast.Expression, follow ...lexer.Token) (retVal ast.Expression) {
 	defer self.trace("")()
 	defer func() {
 		if p := recover(); p != nil {
@@ -1091,7 +1101,7 @@ func (self *Parser) parseDoStatement() *ast.DoStmt {
 	defer self.trace("")()
 
 	var (
-		doStmt = &ast.DoStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+		doStmt = &ast.DoStmt{Node: self.makeNode(self.peek(0))}
 		tok    lexer.Token
 	)
 
@@ -1112,7 +1122,7 @@ func (self *Parser) parseWhileStatement() *ast.WhileStmt {
 	defer self.trace("")()
 
 	var (
-		whileStmt = &ast.WhileStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+		whileStmt = &ast.WhileStmt{Node: self.makeNode(self.peek(0))}
 	)
 
 	self.next()
@@ -1127,7 +1137,7 @@ func (self *Parser) parseWhileStatement() *ast.WhileStmt {
 func (self *Parser) parseLabelStatement() *ast.LabelStmt {
 	defer self.trace("")()
 
-	var labelStmt = &ast.LabelStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var labelStmt = &ast.LabelStmt{Node: self.makeNode(self.peek(0))}
 
 	tok := self.next()
 	if tok.Kind != lexer.IDENTIFIER {
@@ -1142,7 +1152,7 @@ func (self *Parser) parseLabelStatement() *ast.LabelStmt {
 func (self *Parser) parseGotoStatement() *ast.GotoStmt {
 	defer self.trace("")()
 
-	var gotoStmt = &ast.GotoStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var gotoStmt = &ast.GotoStmt{Node: self.makeNode(self.peek(0))}
 
 	self.next()
 	tok := self.next()
@@ -1157,7 +1167,7 @@ func (self *Parser) parseGotoStatement() *ast.GotoStmt {
 func (self *Parser) parseContinueStatement() *ast.ContinueStmt {
 	defer self.trace("")()
 
-	var continueStmt = &ast.ContinueStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var continueStmt = &ast.ContinueStmt{Node: self.makeNode(self.peek(0))}
 
 	self.next()
 	self.mayIgnore(lexer.SEMICOLON)
@@ -1168,7 +1178,7 @@ func (self *Parser) parseContinueStatement() *ast.ContinueStmt {
 func (self *Parser) parseBreakStatement() *ast.BreakStmt {
 	defer self.trace("")()
 
-	var breakStmt = &ast.BreakStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var breakStmt = &ast.BreakStmt{Node: self.makeNode(self.peek(0))}
 
 	self.next()
 	self.mayIgnore(lexer.SEMICOLON)
@@ -1179,7 +1189,7 @@ func (self *Parser) parseBreakStatement() *ast.BreakStmt {
 func (self *Parser) parseReturnStatement() *ast.ReturnStmt {
 	defer self.trace("")()
 
-	var returnStmt = &ast.ReturnStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var returnStmt = &ast.ReturnStmt{Node: self.makeNode(self.peek(0))}
 
 	self.next()
 	if self.peek(0).Kind != lexer.SEMICOLON {
@@ -1195,7 +1205,7 @@ func (self *Parser) parseForStatement() *ast.ForStmt {
 	defer self.trace("")()
 
 	var (
-		forStmt  = &ast.ForStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+		forStmt  = &ast.ForStmt{Node: self.makeNode(self.peek(0))}
 		tok      lexer.Token
 		newScope bool = false
 	)
@@ -1236,7 +1246,7 @@ func (self *Parser) parseForStatement() *ast.ForStmt {
 func (self *Parser) parseCaseStatement() *ast.CaseStmt {
 	defer self.trace("")()
 
-	var caseStmt = &ast.CaseStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var caseStmt = &ast.CaseStmt{Node: self.makeNode(self.peek(0))}
 	self.next()
 	caseStmt.ConstExpr = self.parseExpression(0)
 	self.match(lexer.COLON)
@@ -1248,7 +1258,7 @@ func (self *Parser) parseCaseStatement() *ast.CaseStmt {
 func (self *Parser) parseDefaultStatement() *ast.DefaultStmt {
 	defer self.trace("")()
 
-	var defaultStmt = &ast.DefaultStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var defaultStmt = &ast.DefaultStmt{Node: self.makeNode(self.peek(0))}
 	self.next()
 	self.match(lexer.COLON)
 	defaultStmt.Stmt = self.parseStatement()
@@ -1259,7 +1269,7 @@ func (self *Parser) parseDefaultStatement() *ast.DefaultStmt {
 func (self *Parser) parseDeclStatement() *ast.DeclStmt {
 	defer self.trace("")()
 
-	var declStmt = &ast.DeclStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var declStmt = &ast.DeclStmt{Node: self.makeNode(self.peek(0))}
 	var prevParent = self.effectiveParent
 	self.effectiveParent = declStmt
 
@@ -1292,9 +1302,9 @@ func (self *Parser) parseDeclStatement() *ast.DeclStmt {
 func (self *Parser) parseExprStatement() (ret *ast.ExprStmt) {
 	defer self.trace("")()
 
-	var exprStmt = &ast.ExprStmt{Node: ast.Node{self.ctx, self.peek(0)}}
+	var exprStmt = &ast.ExprStmt{Node: self.makeNode(self.peek(0))}
 
-	exprStmt.Expr = self.tolerableParse(func() ast.Ast {
+	exprStmt.Expr = self.tolerableParse(func() ast.Expression {
 		return self.parseExpression(0)
 	}, lexer.MakeToken(lexer.SEMICOLON, ";"))
 	self.mayIgnore(lexer.SEMICOLON)
@@ -1363,7 +1373,7 @@ func binop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 
 	rhs := p.parseExpression(op.LedPred + bias)
 
-	var expr = &ast.BinaryOperation{ast.Node{p.ctx, op.Token}, op.Token.Kind, lhs, rhs}
+	var expr = &ast.BinaryOperation{p.makeNode(op.Token), op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
 	return expr
 }
@@ -1378,7 +1388,7 @@ func assign_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	}
 	rhs := p.parseExpression(op.LedPred + bias)
 
-	var expr = &ast.CompoundAssignExpr{ast.Node{p.ctx, op.Token}, op.Token.Kind, lhs, rhs}
+	var expr = &ast.CompoundAssignExpr{p.makeNode(op.Token), op.Token.Kind, lhs, rhs}
 	util.Printf("parsed %v", expr.Repr())
 	return expr
 }
@@ -1386,7 +1396,7 @@ func assign_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 // ?:
 func condop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
-	var expr = &ast.ConditionalOperation{Node: ast.Node{p.ctx, op.Token}}
+	var expr = &ast.ConditionalOperation{Node: p.makeNode(op.Token)}
 
 	expr.Cond = lhs
 
@@ -1412,7 +1422,7 @@ func sizeof_nud(p *Parser, op *operation) ast.Expression {
 		p.parseError(tok, "invalid keyword in expression, maybe sizeof ?")
 	}
 
-	e := &ast.SizeofExpr{Node: ast.Node{p.ctx, op.Token}}
+	e := &ast.SizeofExpr{Node: p.makeNode(op.Token)}
 
 	if tok := p.peek(0); tok.Kind == lexer.LPAREN {
 		follow := p.peek(1)
@@ -1437,7 +1447,7 @@ func unaryop_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
 	var expr = p.parseExpression(op.NudPred)
-	return &ast.UnaryOperation{ast.Node{p.ctx, op.Token}, op.Kind, false, expr}
+	return &ast.UnaryOperation{p.makeNode(op.Token), op.Kind, false, expr}
 }
 
 // for postfix
@@ -1445,7 +1455,7 @@ func unaryop_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
 
-	return &ast.UnaryOperation{ast.Node{p.ctx, op.Token}, op.Kind, true, lhs}
+	return &ast.UnaryOperation{p.makeNode(op.Token), op.Kind, true, lhs}
 }
 
 // e1.e2  e1->e2
@@ -1453,7 +1463,7 @@ func member_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
 
-	var expr = &ast.MemberExpr{Node: ast.Node{p.ctx, op.Token}}
+	var expr = &ast.MemberExpr{Node: p.makeNode(op.Token)}
 	expr.Target = lhs
 	expr.Member = p.parseExpression(op.LedPred)
 	if op.Kind == lexer.REFERENCE {
@@ -1467,7 +1477,7 @@ func array_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.match(lexer.OPEN_BRACKET)
 
-	var expr = &ast.ArraySubscriptExpr{Node: ast.Node{p.ctx, op.Token}}
+	var expr = &ast.ArraySubscriptExpr{Node: p.makeNode(op.Token)}
 	expr.Target = lhs
 	expr.Sub = p.parseExpression(op.LedPred)
 	p.match(lexer.CLOSE_BRACKET)
@@ -1478,7 +1488,7 @@ func array_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 func lparen_led(p *Parser, lhs ast.Expression, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.match(lexer.LPAREN)
-	var expr = &ast.FunctionCall{Node: ast.Node{p.ctx, op.Token}}
+	var expr = &ast.FunctionCall{Node: p.makeNode(op.Token)}
 	expr.Func = lhs
 	oldpred := operations[lexer.COMMA].LedPred
 
@@ -1556,12 +1566,12 @@ func lparen_nud(p *Parser, op *operation) ast.Expression {
 		p.match(lexer.RPAREN)
 		// else it is a cast or compoundliteral, and expr should be a type
 		if p.peek(0).Kind == lexer.LBRACE {
-			compoundLit = &ast.CompoundLiteralExpr{Node: ast.Node{p.ctx, op.Token}}
+			compoundLit = &ast.CompoundLiteralExpr{Node: p.makeNode(op.Token)}
 			compoundLit.Type = ty
 			compoundLit.InitList = p.parseInitializerList()
 			return compoundLit
 		} else {
-			cast = &ast.CastExpr{Node: ast.Node{p.ctx, op.Token}}
+			cast = &ast.CastExpr{Node: p.makeNode(op.Token)}
 			cast.Type = ty
 			cast.Expr = p.parseExpression(op.NudPred)
 			return cast
@@ -1579,7 +1589,7 @@ func (self *Parser) parseInitializerList() *ast.InitListExpr {
 		initList *ast.InitListExpr
 	)
 
-	initList = &ast.InitListExpr{Node: ast.Node{self.ctx, self.peek(0)}}
+	initList = &ast.InitListExpr{Node: self.makeNode(self.peek(0))}
 
 	if self.peek(0).Kind == lexer.LBRACE {
 		compound = true
@@ -1637,7 +1647,7 @@ func error_nud(p *Parser, op *operation) ast.Expression {
 func id_nud(p *Parser, op *operation) ast.Expression {
 	defer p.trace("")()
 	p.next()
-	return &ast.DeclRefExpr{ast.Node{p.ctx, op.Token}, op.Token.AsString()}
+	return &ast.DeclRefExpr{p.makeNode(op.Token), op.Token.AsString()}
 }
 
 // for Literal (int, float, string, char...)
@@ -1646,11 +1656,11 @@ func literal_nud(p *Parser, op *operation) ast.Expression {
 	p.next()
 	switch op.Kind {
 	case lexer.INT_LITERAL:
-		return &ast.IntLiteralExpr{Node: ast.Node{p.ctx, op.Token}, Tok: op.Token}
+		return &ast.IntLiteralExpr{Node: p.makeNode(op.Token), Tok: op.Token}
 	case lexer.STR_LITERAL:
-		return &ast.StringLiteralExpr{Node: ast.Node{p.ctx, op.Token}, Tok: op.Token}
+		return &ast.StringLiteralExpr{Node: p.makeNode(op.Token), Tok: op.Token}
 	case lexer.CHAR_LITERAL:
-		return &ast.CharLiteralExpr{Node: ast.Node{p.ctx, op.Token}, Tok: op.Token}
+		return &ast.CharLiteralExpr{Node: p.makeNode(op.Token), Tok: op.Token}
 	}
 	return nil
 }
@@ -1790,6 +1800,7 @@ func (self *Parser) DumpAst() {
 		WalkFunctionCall         func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) bool
 		WalkCompoundAssignExpr   func(ws ast.WalkStage, e *ast.CompoundAssignExpr, ctx *ast.WalkContext) bool
 		WalkCastExpr             func(ws ast.WalkStage, e *ast.CastExpr, ctx *ast.WalkContext) bool
+		WalkImplicitCastExpr     func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext) bool
 		WalkCompoundLiteralExpr  func(ws ast.WalkStage, e *ast.CompoundLiteralExpr, ctx *ast.WalkContext) bool
 		WalkInitListExpr         func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) bool
 		WalkFieldDecl            func(ws ast.WalkStage, e *ast.FieldDecl, ctx *ast.WalkContext)
@@ -1830,7 +1841,7 @@ func (self *Parser) DumpAst() {
 
 	walker.WalkTranslationUnit = func(ws ast.WalkStage, tu *ast.TranslationUnit, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.TranslationUnit")
+			log("TranslationUnit")
 			stack++
 		} else {
 			stack--
@@ -1882,7 +1893,11 @@ func (self *Parser) DumpAst() {
 
 			} else {
 				var ty = reflect.TypeOf(e).Elem()
-				log(fmt.Sprintf("%s(%s)", ty.Name(), lexer.TokKinds[e.Op]))
+				var inferedType = ""
+				if e.GetType() != nil {
+					inferedType = e.GetType().String()
+				}
+				log(fmt.Sprintf("%s(%s '%s')", ty.Name(), inferedType, lexer.TokKinds[e.Op]))
 			}
 			stack++
 		} else {
@@ -1916,7 +1931,7 @@ func (self *Parser) DumpAst() {
 			}
 
 			if e.Type == nil {
-				log("ast.SizeofExpr")
+				log("SizeofExpr")
 			} else {
 				log(fmt.Sprintf("ast.SizeofExpr(%v)", e.Type))
 			}
@@ -1942,10 +1957,14 @@ func (self *Parser) DumpAst() {
 
 			} else {
 				var ty = reflect.TypeOf(e).Elem()
+				var inferedType = ""
+				if e.GetType() != nil {
+					inferedType = e.GetType().String()
+				}
 				if e.Postfix {
-					log(fmt.Sprintf("%s(postfix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+					log(fmt.Sprintf("%s(postfix %s '%s')", ty.Name(), inferedType, lexer.TokKinds[e.Op]))
 				} else {
-					log(fmt.Sprintf("%s(prefix %s)", ty.Name(), lexer.TokKinds[e.Op]))
+					log(fmt.Sprintf("%s(prefix %s '%s')", ty.Name(), inferedType, lexer.TokKinds[e.Op]))
 				}
 			}
 			stack++
@@ -1964,7 +1983,7 @@ func (self *Parser) DumpAst() {
 				ast.WalkAst(e.False, walker)
 				return false
 			}
-			log("ast.ConditionalOperation")
+			log("ConditionalOperation")
 			stack++
 		} else {
 			stack--
@@ -1975,11 +1994,9 @@ func (self *Parser) DumpAst() {
 	walker.WalkArraySubscriptExpr = func(ws ast.WalkStage, e *ast.ArraySubscriptExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if !arraymode {
-				log("ast.ArraySubscriptExpr")
+				log("ArraySubscriptExpr")
 			} else {
-				//arraylog = append(arraylog, "(")
 				ast.WalkAst(e.Target, walker)
-				//arraylog = append(arraylog, ")")
 				arraylog = append(arraylog, "[")
 				ast.WalkAst(e.Sub, walker)
 				arraylog = append(arraylog, "]")
@@ -2001,7 +2018,7 @@ func (self *Parser) DumpAst() {
 				return false
 			}
 
-			log("ast.MemberExpr")
+			log("MemberExpr")
 			stack++
 		} else {
 			stack--
@@ -2020,7 +2037,7 @@ func (self *Parser) DumpAst() {
 
 				return false
 			}
-			log("ast.FunctionCall")
+			log("FunctionCall")
 			stack++
 		} else {
 			stack--
@@ -2051,7 +2068,21 @@ func (self *Parser) DumpAst() {
 				ast.WalkAst(e.Expr, walker)
 				return false
 			}
-			log(fmt.Sprintf("ast.CastExpr(%s)", e.Type))
+			log(fmt.Sprintf("CastExpr(%s)", e.Type))
+			stack++
+		} else {
+			stack--
+		}
+		return true
+	}
+	walker.WalkImplicitCastExpr = func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext) bool {
+		if ws == ast.WalkerPropagate {
+			if arraymode {
+				arraylog = append(arraylog, fmt.Sprintf("<%s>", e.DestType))
+				ast.WalkAst(e.Expr, walker)
+				return false
+			}
+			log(fmt.Sprintf("ImplicitCastExpr(%s <%s>)", e.DestType, e.CastKind))
 			stack++
 		} else {
 			stack--
@@ -2075,13 +2106,13 @@ func (self *Parser) DumpAst() {
 
 	walker.WalkBreakStmt = func(ws ast.WalkStage, e *ast.BreakStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.BreakStmt")
+			log("BreakStmt")
 		}
 	}
 
 	walker.WalkContinueStmt = func(ws ast.WalkStage, e *ast.ContinueStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log("ast.ContinueStmt")
+			log("ContinueStmt")
 		}
 	}
 
@@ -2095,7 +2126,7 @@ func (self *Parser) DumpAst() {
 				arraylog = append(arraylog, "}")
 				return false
 			}
-			log("ast.InitListExpr")
+			log("InitListExpr")
 			stack++
 		} else {
 			stack--
@@ -2405,6 +2436,7 @@ func init() {
 
 	operations[lexer.INT_LITERAL] = &operation{lexer.Token{}, NoAssoc, 200, -1, literal_nud, error_led}
 	operations[lexer.STR_LITERAL] = &operation{lexer.Token{}, NoAssoc, 200, -1, literal_nud, error_led}
+	operations[lexer.CHAR_LITERAL] = &operation{lexer.Token{}, NoAssoc, 200, -1, literal_nud, error_led}
 	operations[lexer.IDENTIFIER] = &operation{lexer.Token{}, NoAssoc, 200, -1, id_nud, error_led}
 
 	// this is for cast-expr, compoundinitexpr
