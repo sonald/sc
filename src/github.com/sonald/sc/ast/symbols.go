@@ -59,9 +59,18 @@ type SymbolType interface {
 	String() string
 }
 
-func isSimpleType(s SymbolType) bool {
-	switch s.(type) {
+func IsSimpleType(ty SymbolType) bool {
+	switch ty.(type) {
 	case *VoidType, *IntegerType, *FloatType, *DoubleType:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsIntegralType(ty SymbolType) bool {
+	switch ty.(type) {
+	case *IntegerType:
 		return true
 	default:
 		return false
@@ -92,12 +101,21 @@ func IsTypeEq(real, expected SymbolType) bool {
 }
 
 func IsTypeCompat(real, expected SymbolType) bool {
+	var numbers = map[string]bool{
+		"IntegerType": true,
+		"FloatType":   true,
+		"DoubleType":  true,
+	}
+
 	var t1, t2 = reflect.TypeOf(real).Elem(), reflect.TypeOf(expected).Elem()
 	if t1.Name() == "Pointer" && t2.Name() == "Pointer" {
 		return IsTypeCompat(real.(*Pointer).Source, expected.(*Pointer).Source)
-	} else if t1.Name() == "IntegerType" && t2.Name() == "IntegerType" {
-		return true
+	} else if _, yes := numbers[t1.Name()]; yes {
+		if _, yes := numbers[t2.Name()]; yes {
+			return true
+		}
 	}
+
 	return t1.Name() == t2.Name()
 }
 
@@ -171,7 +189,7 @@ func (p *Pointer) String() string {
 		}
 		return fmt.Sprintf("struct %s*", s.Name)
 	default:
-		if isSimpleType(p.Source) {
+		if IsSimpleType(p.Source) {
 			return fmt.Sprintf("%v*", p.Source)
 		} else {
 			return fmt.Sprintf("(%v*)", p.Source)
@@ -212,7 +230,7 @@ type Array struct {
 
 func (a *Array) String() string {
 	var s string
-	if isSimpleType(a.ElemType) {
+	if IsSimpleType(a.ElemType) {
 		s = fmt.Sprintf("%v", a.ElemType)
 	} else {
 		s = fmt.Sprintf("(%v)", a.ElemType)
@@ -395,18 +413,36 @@ func (scope *SymbolScope) LookupSymbol(name string, ns SymbolNamespace) *Symbol 
 
 type SymbolPredicate func(*Symbol) bool
 
-func (scope *SymbolScope) LookupSymbolsBy(predicate SymbolPredicate) (ret []*Symbol) {
+func (scope *SymbolScope) LookupSymbolBy(predicate SymbolPredicate) (ret *Symbol) {
 	var current = scope
 
+done:
 	for ; current != nil; current = current.Parent {
 		for _, sym := range current.Symbols {
 			if predicate(sym) {
-				ret = append(ret, sym)
+				ret = sym
+				break done
 			}
 		}
 	}
 
 	return
+}
+
+// helper
+func (scope *SymbolScope) LookupRecordVar(name string) (ret *Symbol) {
+	var isARecordWithName = func(sym *Symbol) bool {
+		var ty = sym.Type
+		if _, ok := ty.(*Pointer); ok {
+			ty = ty.(*Pointer).Source
+		}
+		if _, ok := ty.(*RecordType); ok && sym.Name.AsString() == name {
+			return true
+		}
+		return false
+	}
+
+	return scope.LookupSymbolBy(isARecordWithName)
 }
 
 //FIXME: record and typedef are two distinct name spaces

@@ -639,21 +639,11 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	walker.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
 			if walker.Info.state == CSearchRecord {
-				var isARecordWithName = func(sym *ast.Symbol) bool {
-					var ty = sym.Type
-					if _, ok := ty.(*ast.Pointer); ok {
-						ty = ty.(*ast.Pointer).Source
-					}
-					if _, ok := ty.(*ast.RecordType); ok && sym.Name.AsString() == e.Name {
-						return true
-					}
-					return false
-				}
-				var syms = ctx.Scope.LookupSymbolsBy(isARecordWithName)
-				if syms == nil {
+				var sym = ctx.Scope.LookupRecordVar(e.Name)
+				if sym == nil {
 					panic("impossible")
 				} else {
-					var ty = syms[0].Type
+					var ty = sym.Type
 					if _, ok := ty.(*ast.Pointer); ok {
 						ty = ty.(*ast.Pointer).Source
 					}

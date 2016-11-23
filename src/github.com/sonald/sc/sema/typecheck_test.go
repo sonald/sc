@@ -279,6 +279,62 @@ int main()
 	}
 }
 
+func TestCheckTypes5(t *testing.T) {
+	var text = `
+short foo()
+{
+	char c = 'a';
+	return c;
+}
+
+int main()
+{
+    long l = foo();
+    return 0;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+	}
+}
+
+func TestCheckTypes6(t *testing.T) {
+	var text = `
+short foo(int a, short b, char c[4])
+{
+	return a + b + c[1];
+}
+
+int main()
+{
+	float a;
+	int b;
+	char c[4];
+    long l = foo(a, b, c);
+    return l;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

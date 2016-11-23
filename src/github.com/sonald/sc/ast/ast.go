@@ -198,6 +198,7 @@ const (
 	FunctionToPointerDecay
 	IntegralCast
 	LValueToRValueCast
+	FloatingToIntegralCast
 )
 
 func (ck CastKind) String() string {
@@ -210,6 +211,8 @@ func (ck CastKind) String() string {
 		return "IntegralCast"
 	case LValueToRValueCast:
 		return "LValueToRValueCast"
+	case FloatingToIntegralCast:
+		return "FloatingToIntegralCast"
 	}
 	return ""
 }
