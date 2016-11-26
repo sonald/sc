@@ -185,6 +185,21 @@ struct node {
 	}
 }
 
+func collectAst(top ast.Ast) (ret []ast.Ast) {
+	var CollectCast struct {
+		WalkImplicitCastExpr func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext)
+	}
+
+	CollectCast.WalkImplicitCastExpr = func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext) {
+		if ws == ast.WalkerPropagate {
+			ret = append(ret, e)
+		}
+	}
+
+	ast.WalkAst(top, CollectCast)
+	return
+}
+
 func TestCheckTypes1(t *testing.T) {
 	var text = `
 int foo() {
@@ -204,6 +219,10 @@ int foo() {
 		DumpReports()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
+		}
+
+		if casts := collectAst(top); len(casts) != 8 {
+			t.Errorf("should have 8 casts, but %d", len(casts))
 		}
 	}
 }
@@ -225,6 +244,9 @@ int foo() {
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
+		if casts := collectAst(top); len(casts) != 1 {
+			t.Errorf("should have 1 casts, but %d", len(casts))
+		}
 	}
 }
 
@@ -245,6 +267,9 @@ int foo() {
 		DumpReports()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
+		}
+		if casts := collectAst(top); len(casts) != 1 {
+			t.Errorf("should have 1 casts, but %d", len(casts))
 		}
 	}
 }
@@ -276,6 +301,9 @@ int main()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
+		if casts := collectAst(top); len(casts) != 1 {
+			t.Errorf("should have 1 casts, but %d", len(casts))
+		}
 	}
 }
 
@@ -302,6 +330,9 @@ int main()
 		DumpReports()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
+		}
+		if casts := collectAst(top); len(casts) != 2 {
+			t.Errorf("should have 2 casts, but %d", len(casts))
 		}
 	}
 }
@@ -331,6 +362,76 @@ int main()
 		DumpReports()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
+		}
+		if casts := collectAst(top); len(casts) != 7 {
+			t.Errorf("should have 7 casts, but %d", len(casts))
+		}
+	}
+}
+
+func TestCheckTypes7(t *testing.T) {
+	var text = `
+	// array to pointer
+void foo(char c[4])
+{
+}
+int main()
+{
+	char c[4], c2[4];
+	char *p = c;
+	char c1 = *(c + 2);
+	short i = c2 - c;
+	char *p2 = &c[2];
+	int i2 = *c;
+
+	foo(c);
+    return 0;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+		if casts := collectAst(top); len(casts) != 7 {
+			t.Errorf("should have 7 casts, but %d", len(casts))
+		}
+	}
+}
+
+func TestCheckTypes8(t *testing.T) {
+	var text = `
+struct result {int x,y;};
+struct result cb1()
+{
+}
+int main()
+{
+	struct result (*cbs[])() = {
+		cb1
+	};
+
+	long l = cbs[0]().x;
+    return 0;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+		if casts := collectAst(top); len(casts) != 1 {
+			t.Errorf("should have 1 casts, but %d", len(casts))
 		}
 	}
 }

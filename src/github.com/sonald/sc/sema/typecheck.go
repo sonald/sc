@@ -158,7 +158,7 @@ func MakeCheckTypes() ast.AstWalker {
 				e.CastKind = ast.IntegralCast
 				e.DestType = &ast.IntegerType{false, "int"}
 				e.Expr = expr
-				e.InferedType = expr.GetType()
+				e.InferedType = e.DestType
 				return e
 			}
 		}
@@ -171,9 +171,20 @@ func MakeCheckTypes() ast.AstWalker {
 		switch ty.(type) {
 		case *ast.VoidType:
 		case *ast.IntegerType:
-			expr = &ast.ImplicitCastExpr{*nd, ast.IntegralCast, destType, expr}
+			var e = &ast.ImplicitCastExpr{*nd, ast.IntegralCast, destType, expr}
+			e.InferedType = e.DestType
+			expr = e
+
 		case *ast.FloatType, *ast.DoubleType:
-			expr = &ast.ImplicitCastExpr{*nd, ast.FloatingToIntegralCast, destType, expr}
+			var e = &ast.ImplicitCastExpr{*nd, ast.FloatingToIntegralCast, destType, expr}
+			e.InferedType = e.DestType
+			expr = e
+
+		case *ast.Array:
+			var e = &ast.ImplicitCastExpr{*nd, ast.ArrayToPointerDecay, destType, expr}
+			e.InferedType = e.DestType
+			expr = e
+
 		default:
 		}
 		return expr
@@ -269,7 +280,24 @@ func MakeCheckTypes() ast.AstWalker {
 
 	var checkPointerArithmetic = func(bop *ast.BinaryOperation) bool {
 		var lty, rty = bop.LHS.GetType(), bop.RHS.GetType()
+
 		var t1, t2 = reflect.TypeOf(lty).Elem(), reflect.TypeOf(rty).Elem()
+		if t1.Name() == "Array" {
+			var aty = lty.(*ast.Array)
+			var dty = &ast.Pointer{aty.ElemType}
+			bop.LHS = tryImplicitCast(bop.LHS, dty, &bop.Node)
+			lty = dty
+			t1 = reflect.TypeOf(lty).Elem()
+		}
+
+		if t2.Name() == "Array" {
+			var aty = rty.(*ast.Array)
+			var dty = &ast.Pointer{aty.ElemType}
+			bop.RHS = tryImplicitCast(bop.RHS, dty, &bop.Node)
+			rty = dty
+			t2 = reflect.TypeOf(rty).Elem()
+		}
+
 		if t1.Name() == "Pointer" || t2.Name() == "Pointer" {
 			if t1.Name() == "Pointer" && t2.Name() == "Pointer" {
 				if bop.Op == lexer.PLUS {
@@ -334,7 +362,7 @@ func MakeCheckTypes() ast.AstWalker {
 				e.InferedType = e.LHS.GetType()
 
 			} else if e.Op == lexer.COMMA {
-				e.InferedType = e.RHS.GetType()
+				e.InferedType = e.LHS.GetType()
 
 			} else if e.Op == lexer.LSHIFT || e.Op == lexer.RSHIFT {
 				e.LHS = promoteNode(e.LHS, &e.Node)
@@ -358,8 +386,9 @@ func MakeCheckTypes() ast.AstWalker {
 	}
 	CheckTypes.WalkDeclRefExpr = func(ws ast.WalkStage, e *ast.DeclRefExpr, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
-			// we do not need to cosider other namespace since it'll be taken care
+			// we do not need to consider other namespace since it'll be taken care
 			// elsewhere. e.g MemberExpr
+			util.Printf(util.Sema, util.Debug, "lookup %s", e.Name)
 			var sym = ctx.Scope.LookupSymbol(e.Name, ast.OrdinaryNS)
 			e.InferedType = sym.Type
 		}
@@ -383,6 +412,11 @@ func MakeCheckTypes() ast.AstWalker {
 
 			case lexer.MUL: // pointer deref
 				var ty = e.Expr.GetType()
+				if aty, ok := ty.(*ast.Array); ok {
+					ty = &ast.Pointer{aty.ElemType}
+					e.Expr = tryImplicitCast(e.Expr, ty, &e.Node)
+				}
+
 				if _, ok := ty.(*ast.Pointer); !ok {
 					panic("indirection requires pointer operand")
 				} else {
@@ -413,6 +447,7 @@ func MakeCheckTypes() ast.AstWalker {
 				panic("target should be array type")
 			} else {
 				e.InferedType = aty.ElemType
+				util.Printf(util.Sema, util.Debug, "WalkArraySubscriptExpr %v", e.InferedType)
 			}
 
 			if _, yes := e.Sub.GetType().(*ast.IntegerType); !yes {
@@ -487,7 +522,17 @@ func MakeCheckTypes() ast.AstWalker {
 	}
 	CheckTypes.WalkFunctionCall = func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
-			if ty, yes := e.Func.GetType().(*ast.Function); yes {
+			var ty = e.Func.GetType()
+		done:
+			for {
+				switch ty.(type) {
+				case *ast.Pointer:
+					ty = ty.(*ast.Pointer).Source
+				default:
+					break done
+				}
+			}
+			if ty, yes := ty.(*ast.Function); yes {
 				e.InferedType = ty.Return
 				if len(ty.Args) != len(e.Args) {
 					switch e.Func.(type) {
@@ -533,7 +578,10 @@ func MakeCheckTypes() ast.AstWalker {
 	}
 	CheckTypes.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
-			e.InferedType = e.Inits[0].GetType()
+			if len(e.Inits) > 0 {
+				e.InferedType = e.Inits[0].GetType()
+				util.Printf(util.Sema, util.Debug, "WalkInitListExpr %v", e.InferedType)
+			}
 		}
 	}
 	CheckTypes.WalkImplicitCastExpr = func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext) {
