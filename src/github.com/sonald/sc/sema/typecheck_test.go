@@ -185,7 +185,7 @@ struct node {
 	}
 }
 
-func collectAst(top ast.Ast) (ret []ast.Ast) {
+func collectCasts(top ast.Ast) (ret []ast.Ast) {
 	var CollectCast struct {
 		WalkImplicitCastExpr func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext)
 	}
@@ -221,7 +221,7 @@ int foo() {
 			t.Errorf("should have 0 reports")
 		}
 
-		if casts := collectAst(top); len(casts) != 8 {
+		if casts := collectCasts(top); len(casts) != 8 {
 			t.Errorf("should have 8 casts, but %d", len(casts))
 		}
 	}
@@ -244,7 +244,7 @@ int foo() {
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
-		if casts := collectAst(top); len(casts) != 1 {
+		if casts := collectCasts(top); len(casts) != 1 {
 			t.Errorf("should have 1 casts, but %d", len(casts))
 		}
 	}
@@ -268,7 +268,7 @@ int foo() {
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
-		if casts := collectAst(top); len(casts) != 1 {
+		if casts := collectCasts(top); len(casts) != 1 {
 			t.Errorf("should have 1 casts, but %d", len(casts))
 		}
 	}
@@ -301,7 +301,7 @@ int main()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
-		if casts := collectAst(top); len(casts) != 1 {
+		if casts := collectCasts(top); len(casts) != 1 {
 			t.Errorf("should have 1 casts, but %d", len(casts))
 		}
 	}
@@ -331,8 +331,8 @@ int main()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
-		if casts := collectAst(top); len(casts) != 2 {
-			t.Errorf("should have 2 casts, but %d", len(casts))
+		if casts := collectCasts(top); len(casts) != 3 {
+			t.Errorf("should have 3 casts, but %d", len(casts))
 		}
 	}
 }
@@ -363,8 +363,8 @@ int main()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
-		if casts := collectAst(top); len(casts) != 7 {
-			t.Errorf("should have 7 casts, but %d", len(casts))
+		if casts := collectCasts(top); len(casts) != 8 {
+			t.Errorf("should have 8 casts, but %d", len(casts))
 		}
 	}
 }
@@ -398,8 +398,8 @@ int main()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
-		if casts := collectAst(top); len(casts) != 7 {
-			t.Errorf("should have 7 casts, but %d", len(casts))
+		if casts := collectCasts(top); len(casts) != 8 {
+			t.Errorf("should have 8 casts, but %d", len(casts))
 		}
 	}
 }
@@ -417,7 +417,11 @@ int main()
 	};
 
 	long l = cbs[0]().x;
-    return 0;
+
+    struct result r;
+    r = (struct result){1,2};
+
+    return (struct result){1,2}.x;
 }
 `
 	top, p := testTemplate(t, text)
@@ -430,8 +434,41 @@ int main()
 		if len(Reports) != 0 {
 			t.Errorf("should have 0 reports")
 		}
-		if casts := collectAst(top); len(casts) != 1 {
-			t.Errorf("should have 1 casts, but %d", len(casts))
+		if casts := collectCasts(top); len(casts) != 2 {
+			t.Errorf("should have 2 casts, but %d", len(casts))
+		}
+	}
+}
+
+func TestCheckTypes9(t *testing.T) {
+	var text = `
+int main()
+{
+	int f(int);
+	int (*p)(int) = f; // conversion to &f
+	(***p)(1); // repeated dereference to f and conversion back to &f
+
+	if (p == f) {
+	}
+
+	if (p - f) {
+	}
+
+	int i = f(0) >> 2;
+}
+`
+	top, p := testTemplate(t, text)
+	if top == nil {
+		t.Errorf("parse failed")
+	} else {
+		ast.WalkAst(top, MakeCheckTypes())
+		p.DumpAst()
+		DumpReports()
+		if len(Reports) != 0 {
+			t.Errorf("should have 0 reports")
+		}
+		if casts := collectCasts(top); len(casts) != 7 {
+			t.Errorf("should have 7 casts, but %d", len(casts))
 		}
 	}
 }

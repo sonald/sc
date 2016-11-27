@@ -185,6 +185,11 @@ func MakeCheckTypes() ast.AstWalker {
 			e.InferedType = e.DestType
 			expr = e
 
+		case *ast.Function:
+			var e = &ast.ImplicitCastExpr{*nd, ast.FunctionToPointerDecay, destType, expr}
+			e.InferedType = e.DestType
+			expr = e
+
 		default:
 		}
 		return expr
@@ -324,12 +329,32 @@ func MakeCheckTypes() ast.AstWalker {
 		return false
 	}
 
+	var functionOrArrayConversion = func(e ast.Expression, node *ast.Node) ast.Expression {
+		var ty = e.GetType()
+		switch ty.(type) {
+		case *ast.Function:
+			ty = &ast.Pointer{ty.(*ast.Function)}
+			e = tryImplicitCast(e, ty, node)
+		case *ast.Array:
+			ty = &ast.Pointer{ty.(*ast.Array).ElemType}
+			e = tryImplicitCast(e, ty, node)
+		}
+
+		return e
+	}
+
 	CheckTypes.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
 			sym := ctx.Scope.LookupSymbol(e.Sym, ast.OrdinaryNS)
 			e.InferedType = sym.Type
-			if e.Init != nil && !ast.IsTypeEq(sym.Type, e.Init.GetType()) {
-				e.Init = tryImplicitCast(e.Init, sym.Type, &e.Node)
+			if e.Init != nil {
+				if _, yes := e.Init.(*ast.InitListExpr); !yes {
+					e.Init = functionOrArrayConversion(e.Init, &e.Node)
+
+					if !ast.IsTypeEq(sym.Type, e.Init.GetType()) {
+						e.Init = tryImplicitCast(e.Init, sym.Type, &e.Node)
+					}
+				}
 			}
 		}
 	}
@@ -353,6 +378,8 @@ func MakeCheckTypes() ast.AstWalker {
 	CheckTypes.WalkBinaryOperation = func(ws ast.WalkStage, e *ast.BinaryOperation, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
 			if e.Op == lexer.ASSIGN {
+				e.RHS = functionOrArrayConversion(e.RHS, &e.Node)
+
 				e.InferedType = e.LHS.GetType()
 				if !ast.IsTypeEq(e.LHS.GetType(), e.RHS.GetType()) {
 					e.RHS = tryImplicitCast(e.RHS, e.LHS.GetType(), &e.Node)
@@ -360,9 +387,11 @@ func MakeCheckTypes() ast.AstWalker {
 
 			} else if e.Op == lexer.LOG_OR || e.Op == lexer.LOG_AND {
 				e.InferedType = e.LHS.GetType()
+				e.RHS = functionOrArrayConversion(e.RHS, &e.Node)
 
 			} else if e.Op == lexer.COMMA {
 				e.InferedType = e.LHS.GetType()
+				e.RHS = functionOrArrayConversion(e.RHS, &e.Node)
 
 			} else if e.Op == lexer.LSHIFT || e.Op == lexer.RSHIFT {
 				e.LHS = promoteNode(e.LHS, &e.Node)
@@ -370,6 +399,9 @@ func MakeCheckTypes() ast.AstWalker {
 				e.InferedType = e.LHS.GetType()
 
 			} else {
+				e.LHS = functionOrArrayConversion(e.LHS, &e.Node)
+				e.RHS = functionOrArrayConversion(e.RHS, &e.Node)
+
 				if (e.Op == lexer.PLUS || e.Op == lexer.MINUS) && checkPointerArithmetic(e) {
 					return
 				}
@@ -411,12 +443,9 @@ func MakeCheckTypes() ast.AstWalker {
 				e.InferedType = &ast.Pointer{e.Expr.GetType()}
 
 			case lexer.MUL: // pointer deref
-				var ty = e.Expr.GetType()
-				if aty, ok := ty.(*ast.Array); ok {
-					ty = &ast.Pointer{aty.ElemType}
-					e.Expr = tryImplicitCast(e.Expr, ty, &e.Node)
-				}
+				e.Expr = functionOrArrayConversion(e.Expr, &e.Node)
 
+				var ty = e.Expr.GetType()
 				if _, ok := ty.(*ast.Pointer); !ok {
 					panic("indirection requires pointer operand")
 				} else {
@@ -436,6 +465,10 @@ func MakeCheckTypes() ast.AstWalker {
 	}
 	CheckTypes.WalkConditionalOperation = func(ws ast.WalkStage, e *ast.ConditionalOperation, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
+			e.Cond = functionOrArrayConversion(e.Cond, &e.Node)
+			e.True = functionOrArrayConversion(e.True, &e.Node)
+			e.False = functionOrArrayConversion(e.False, &e.Node)
+
 			e.InferedType = e.True.GetType()
 			ast.TypeAssertEq(e.False.GetType(), e.True.GetType(), "conditional type mismatch")
 		}
@@ -522,6 +555,8 @@ func MakeCheckTypes() ast.AstWalker {
 	}
 	CheckTypes.WalkFunctionCall = func(ws ast.WalkStage, e *ast.FunctionCall, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
+			e.Func = functionOrArrayConversion(e.Func, &e.Node)
+
 			var ty = e.Func.GetType()
 		done:
 			for {
@@ -578,10 +613,11 @@ func MakeCheckTypes() ast.AstWalker {
 	}
 	CheckTypes.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) {
 		if ws == ast.WalkerBubbleUp {
-			if len(e.Inits) > 0 {
-				e.InferedType = e.Inits[0].GetType()
-				util.Printf(util.Sema, util.Debug, "WalkInitListExpr %v", e.InferedType)
+			for i := 0; i < len(e.Inits); i++ {
+				e.Inits[i] = functionOrArrayConversion(e.Inits[i], &e.Node)
 			}
+			// initList itself can not determine type
+			e.InferedType = nil
 		}
 	}
 	CheckTypes.WalkImplicitCastExpr = func(ws ast.WalkStage, e *ast.ImplicitCastExpr, ctx *ast.WalkContext) {

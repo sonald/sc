@@ -2096,7 +2096,7 @@ func (self *Parser) DumpAst() {
 				ast.WalkAst(e.InitList, walker)
 				return false
 			}
-			log(fmt.Sprintf("ast.CompoundLiteralExpr(%s)", e.Type))
+			log(fmt.Sprintf("CompoundLiteralExpr(%s)", e.Type))
 			stack++
 		} else {
 			stack--
@@ -2135,7 +2135,7 @@ func (self *Parser) DumpAst() {
 	}
 	walker.WalkFieldDecl = func(ws ast.WalkStage, e *ast.FieldDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			log(fmt.Sprintf("ast.FieldDecl(%s)", e.Sym))
+			log(fmt.Sprintf("FieldDecl(%s)", e.Sym))
 		}
 	}
 	walker.WalkRecordDecl = func(ws ast.WalkStage, e *ast.RecordDecl, ctx *ast.WalkContext) {
