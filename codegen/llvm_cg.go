@@ -343,6 +343,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 	walker.WalkCharLiteralExpr = func(ws ast.WalkStage, e *ast.CharLiteralExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
+			// Convert character literal to 8-bit integer constant
+			var charValue = uint64(e.Tok.AsInt()) // Use AsInt() to get the char value
+			ctx.Value = llvm.ConstInt(walker.Info.llvmCtx.Int8Type(), charValue, false)
 		}
 		return true
 	}
@@ -501,7 +504,53 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 	walker.WalkSizeofExpr = func(ws ast.WalkStage, e *ast.SizeofExpr, ctx *ast.WalkContext) bool {
 		if ws == ast.WalkerPropagate {
-		} else {
+			var sizeType llvm.Type
+			
+			// Determine the type to calculate size for
+			if e.Type != nil {
+				// sizeof(type) - direct type specification
+				sizeType = symbolTy2llvmType(e.Type, walker.Info.llvmCtx)
+			} else if e.Expr != nil {
+				// sizeof(expr) - get type from expression
+				var exprType ast.SymbolType = e.Expr.GetType()
+				if exprType != nil {
+					sizeType = symbolTy2llvmType(exprType, walker.Info.llvmCtx)
+				} else {
+					// Fallback: evaluate expression and get its type
+					var val = ast.WalkAst(e.Expr, walker, ctx).(llvm.Value)
+					sizeType = val.Type()
+					if sizeType.TypeKind() == llvm.PointerTypeKind {
+						sizeType = sizeType.ElementType()
+					}
+				}
+			} else {
+				panic("sizeof expression has neither type nor expression")
+			}
+			
+			// Calculate size using LLVM's target data
+			var targetData = walker.Info.Mod.TargetData()
+			var size uint64
+			if !targetData.IsNil() {
+				size = targetData.TypeSizeInBits(sizeType) / 8
+			} else {
+				// Fallback size calculation for basic types
+				switch sizeType.TypeKind() {
+				case llvm.IntegerTypeKind:
+					size = uint64(sizeType.IntTypeWidth() / 8)
+				case llvm.PointerTypeKind:
+					size = 8 // Assume 64-bit pointers
+				case llvm.ArrayTypeKind:
+					elemSize := targetData.TypeSizeInBits(sizeType.ElementType()) / 8
+					size = uint64(sizeType.ArrayLength()) * elemSize
+				case llvm.StructTypeKind:
+					size = targetData.TypeSizeInBits(sizeType) / 8
+				default:
+					size = 1 // Default fallback
+				}
+			}
+			
+			// Return size as size_t (use i64 for now)
+			ctx.Value = llvm.ConstInt(walker.Info.llvmCtx.Int64Type(), size, false)
 		}
 		return true
 	}
@@ -583,7 +632,70 @@ func MakeLLVMCodeGen() ast.AstWalker {
 		return true
 	}
 	walker.WalkConditionalOperation = func(ws ast.WalkStage, e *ast.ConditionalOperation, ctx *ast.WalkContext) bool {
-		if ws == ast.WalkerBubbleUp {
+		if ws == ast.WalkerPropagate {
+			// Implement ternary operator: cond ? true_expr : false_expr
+			var fn = walker.Info.builder.GetInsertBlock().Parent()
+			var trueBB = llvm.AddBasicBlock(fn, "cond.true")
+			var falseBB = llvm.AddBasicBlock(fn, "cond.false")
+			var mergeBB = llvm.AddBasicBlock(fn, "cond.end")
+			
+			// Evaluate condition
+			var cond = ast.WalkAst(e.Cond, walker, ctx).(llvm.Value)
+			if cond.Type().TypeKind() == llvm.PointerTypeKind {
+				cond = walker.Info.builder.CreateLoad(cond, "")
+			}
+			
+			// Convert condition to boolean if necessary
+			if cond.Type().TypeKind() != llvm.IntegerTypeKind || cond.Type().IntTypeWidth() != 1 {
+				var zero = llvm.ConstInt(cond.Type(), 0, false)
+				cond = walker.Info.builder.CreateICmp(llvm.IntNE, cond, zero, "cond.bool")
+			}
+			
+			walker.Info.builder.CreateCondBr(cond, trueBB, falseBB)
+			
+			// Generate true branch
+			walker.Info.builder.SetInsertPoint(trueBB, trueBB.FirstInstruction())
+			var trueVal = ast.WalkAst(e.True, walker, ctx).(llvm.Value)
+			if trueVal.Type().TypeKind() == llvm.PointerTypeKind {
+				trueVal = walker.Info.builder.CreateLoad(trueVal, "")
+			}
+			var trueBBEnd = walker.Info.builder.GetInsertBlock()
+			walker.Info.builder.CreateBr(mergeBB)
+			
+			// Generate false branch  
+			walker.Info.builder.SetInsertPoint(falseBB, falseBB.FirstInstruction())
+			var falseVal = ast.WalkAst(e.False, walker, ctx).(llvm.Value)
+			if falseVal.Type().TypeKind() == llvm.PointerTypeKind {
+				falseVal = walker.Info.builder.CreateLoad(falseVal, "")
+			}
+			var falseBBEnd = walker.Info.builder.GetInsertBlock()
+			walker.Info.builder.CreateBr(mergeBB)
+			
+			// Create PHI node in merge block
+			walker.Info.builder.SetInsertPoint(mergeBB, mergeBB.FirstInstruction())
+			var resultType = trueVal.Type()
+			
+			// Handle type conversion if types don't match
+			if trueVal.Type() != falseVal.Type() {
+				// Perform usual arithmetic conversions
+				if trueVal.Type().TypeKind() == llvm.IntegerTypeKind && falseVal.Type().TypeKind() == llvm.IntegerTypeKind {
+					var trueWidth = trueVal.Type().IntTypeWidth()
+					var falseWidth = falseVal.Type().IntTypeWidth()
+					if trueWidth > falseWidth {
+						resultType = trueVal.Type()
+						falseVal = walker.Info.builder.CreateSExt(falseVal, resultType, "")
+					} else if falseWidth > trueWidth {
+						resultType = falseVal.Type()
+						trueVal = walker.Info.builder.CreateSExt(trueVal, resultType, "")
+					}
+				}
+			}
+			
+			var phi = walker.Info.builder.CreatePHI(resultType, "cond.result")
+			phi.AddIncoming([]llvm.Value{trueVal, falseVal}, []llvm.BasicBlock{trueBBEnd, falseBBEnd})
+			
+			ctx.Value = phi
+			return false
 		}
 		return true
 	}
@@ -728,17 +840,124 @@ func MakeLLVMCodeGen() ast.AstWalker {
 				if l.Type().TypeKind() == llvm.PointerTypeKind {
 					l = walker.Info.builder.CreateLoad(l, lhs.Name())
 				}
-
 				if r.Type().TypeKind() == llvm.PointerTypeKind {
 					r = walker.Info.builder.CreateLoad(r, rhs.Name())
 				}
-
 				var val = walker.Info.builder.CreateAdd(l, r, "")
 				walker.Info.builder.CreateStore(val, lhs)
 				op = val
 
+			case lexer.MINUS_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateSub(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.MUL_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateMul(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.DIV_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateSDiv(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.MOD_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateSRem(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.LSHIFT_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateShl(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.RSHIFT_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateAShr(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.AND_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateAnd(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.XOR_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateXor(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
+			case lexer.OR_ASSIGN:
+				var l, r llvm.Value = lhs, rhs
+				if l.Type().TypeKind() == llvm.PointerTypeKind {
+					l = walker.Info.builder.CreateLoad(l, lhs.Name())
+				}
+				if r.Type().TypeKind() == llvm.PointerTypeKind {
+					r = walker.Info.builder.CreateLoad(r, rhs.Name())
+				}
+				var val = walker.Info.builder.CreateOr(l, r, "")
+				walker.Info.builder.CreateStore(val, lhs)
+				op = val
+
 			default:
-				panic("not implemented")
+				// This should not happen if all operators are implemented
+				panic(fmt.Sprintf("compound assignment operator %s not implemented", lexer.TokKinds[e.Op]))
 			}
 
 			ctx.Value = op
@@ -749,14 +968,138 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 
 	walker.WalkCastExpr = func(ws ast.WalkStage, e *ast.CastExpr, ctx *ast.WalkContext) bool {
-		if ws == ast.WalkerPropagate {
-		} else {
+		if ws == ast.WalkerBubbleUp {
+			// Get the value to cast and target type
+			var val = ctx.Value.(llvm.Value)
+			var targetType = symbolTy2llvmType(e.Type, walker.Info.llvmCtx)
+			
+			// Load value if it's a pointer
+			var sourceVal = val
+			if val.Type().TypeKind() == llvm.PointerTypeKind {
+				sourceVal = walker.Info.builder.CreateLoad(val, "")
+			}
+			
+			var sourceType = sourceVal.Type()
+			
+			// If types are already the same, no conversion needed
+			if sourceType == targetType {
+				ctx.Value = sourceVal
+				return true
+			}
+			
+			var result llvm.Value
+			
+			// Handle different conversion cases
+			switch {
+			// Integer to Integer conversions
+			case sourceType.TypeKind() == llvm.IntegerTypeKind && targetType.TypeKind() == llvm.IntegerTypeKind:
+				var sourceWidth = sourceType.IntTypeWidth()
+				var targetWidth = targetType.IntTypeWidth()
+				
+				if sourceWidth < targetWidth {
+					// Sign extend for larger target
+					result = walker.Info.builder.CreateSExt(sourceVal, targetType, "cast.sext")
+				} else if sourceWidth > targetWidth {
+					// Truncate for smaller target
+					result = walker.Info.builder.CreateTrunc(sourceVal, targetType, "cast.trunc")
+				} else {
+					// Same width, bitcast
+					result = walker.Info.builder.CreateBitCast(sourceVal, targetType, "cast.bitcast")
+				}
+				
+			// Pointer to Integer
+			case sourceType.TypeKind() == llvm.PointerTypeKind && targetType.TypeKind() == llvm.IntegerTypeKind:
+				result = walker.Info.builder.CreatePtrToInt(sourceVal, targetType, "cast.ptrtoint")
+				
+			// Integer to Pointer
+			case sourceType.TypeKind() == llvm.IntegerTypeKind && targetType.TypeKind() == llvm.PointerTypeKind:
+				result = walker.Info.builder.CreateIntToPtr(sourceVal, targetType, "cast.inttoptr")
+				
+			// Pointer to Pointer
+			case sourceType.TypeKind() == llvm.PointerTypeKind && targetType.TypeKind() == llvm.PointerTypeKind:
+				result = walker.Info.builder.CreateBitCast(sourceVal, targetType, "cast.ptrcast")
+				
+			// Integer to Float (if float types are supported)
+			case sourceType.TypeKind() == llvm.IntegerTypeKind && targetType.TypeKind() == llvm.FloatTypeKind:
+				result = walker.Info.builder.CreateSIToFP(sourceVal, targetType, "cast.sitofp")
+				
+			// Float to Integer (if float types are supported)
+			case sourceType.TypeKind() == llvm.FloatTypeKind && targetType.TypeKind() == llvm.IntegerTypeKind:
+				result = walker.Info.builder.CreateFPToSI(sourceVal, targetType, "cast.fptosi")
+				
+			// Float to Float (if float types are supported)
+			case sourceType.TypeKind() == llvm.FloatTypeKind && targetType.TypeKind() == llvm.FloatTypeKind:
+				if sourceType.FloatTypeKind() < targetType.FloatTypeKind() {
+					result = walker.Info.builder.CreateFPExt(sourceVal, targetType, "cast.fpext")
+				} else {
+					result = walker.Info.builder.CreateFPTrunc(sourceVal, targetType, "cast.fptrunc")
+				}
+				
+			// Default: try bitcast
+			default:
+				result = walker.Info.builder.CreateBitCast(sourceVal, targetType, "cast.bitcast")
+			}
+			
+			ctx.Value = result
 		}
 		return true
 	}
 	walker.WalkCompoundLiteralExpr = func(ws ast.WalkStage, e *ast.CompoundLiteralExpr, ctx *ast.WalkContext) bool {
-		if ws == ast.WalkerPropagate {
-		} else {
+		if ws == ast.WalkerBubbleUp {
+			// Get the target type for the compound literal
+			var targetType = symbolTy2llvmType(e.Type, walker.Info.llvmCtx)
+			
+			// Allocate storage for the compound literal
+			var storage = walker.Info.builder.CreateAlloca(targetType, "compound.literal")
+			
+			// Handle the initializer list
+			if e.InitList != nil {
+				var initVal = ast.WalkAst(e.InitList, walker, ctx).(llvm.Value)
+				
+				// Different handling based on target type
+				switch targetType.TypeKind() {
+				case llvm.ArrayTypeKind:
+					// For arrays, copy from the initializer
+					if initVal.Type().TypeKind() == llvm.PointerTypeKind &&
+						initVal.Type().ElementType().TypeKind() == llvm.ArrayTypeKind {
+						// Source is a pointer to array, need to copy element by element
+						var elemType = targetType.ElementType()
+						var arrayLen = targetType.ArrayLength()
+						
+						for i := 0; i < arrayLen; i++ {
+							var idx = llvm.ConstInt(llvm.Int32Type(), uint64(i), false)
+							var srcPtr = walker.Info.builder.CreateInBoundsGEP(initVal, 
+								[]llvm.Value{llvm.ConstInt(llvm.Int32Type(), 0, false), idx}, "")
+							var dstPtr = walker.Info.builder.CreateInBoundsGEP(storage, 
+								[]llvm.Value{llvm.ConstInt(llvm.Int32Type(), 0, false), idx}, "")
+							var elem = walker.Info.builder.CreateLoad(srcPtr, "")
+							walker.Info.builder.CreateStore(elem, dstPtr)
+						}
+					}
+					
+				case llvm.StructTypeKind:
+					// For structs, copy the initializer
+					if initVal.Type() == targetType {
+						walker.Info.builder.CreateStore(initVal, storage)
+					} else {
+						// Need to handle struct initialization properly
+						walker.Info.builder.CreateStore(initVal, storage)
+					}
+					
+				default:
+					// For other types, direct store
+					if initVal.Type().TypeKind() == llvm.PointerTypeKind {
+						initVal = walker.Info.builder.CreateLoad(initVal, "")
+					}
+					walker.Info.builder.CreateStore(initVal, storage)
+				}
+			} else {
+				// No initializer, zero-initialize
+				var zero = llvm.ConstNull(targetType)
+				walker.Info.builder.CreateStore(zero, storage)
+			}
+			
+			ctx.Value = storage
 		}
 		return true
 	}
@@ -775,16 +1118,73 @@ func MakeLLVMCodeGen() ast.AstWalker {
 
 	walker.WalkContinueStmt = func(ws ast.WalkStage, e *ast.ContinueStmt, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
+			// TODO: Implement continue targets stack similar to break targets
+			// For now, this is a placeholder that should be enhanced when 
+			// proper loop continue handling is implemented
+			var orig = walker.Info.builder.GetInsertBlock()
+			if orig.LastInstruction().IsNil() || orig.LastInstruction().IsATerminatorInst().IsNil() {
+				// This is a placeholder - we need to implement continue target tracking
+				// similar to how break targets are handled
+				panic("continue statement support requires continue target tracking implementation")
+			}
 		}
 	}
 
 	walker.WalkInitListExpr = func(ws ast.WalkStage, e *ast.InitListExpr, ctx *ast.WalkContext) bool {
-		if ws == ast.WalkerPropagate {
+		if ws == ast.WalkerBubbleUp {
+			// Collect all initializer values
+			var initValues []llvm.Value
+			
+			// Process each initializer expression
+			for _, init := range e.Inits {
+				var val = ast.WalkAst(init, walker, ctx).(llvm.Value)
+				if val.Type().TypeKind() == llvm.PointerTypeKind {
+					val = walker.Info.builder.CreateLoad(val, "")
+				}
+				initValues = append(initValues, val)
+			}
+			
+			if len(initValues) == 0 {
+				// Empty initializer list
+				ctx.Value = llvm.Value{}
+				return true
+			}
+			
+			// Determine the element type from the first initializer
+			var elemType = initValues[0].Type()
+			
+			// For now, create a constant array with the initializer values
+			// This assumes all elements are of the same type
+			var constValues []llvm.Value
+			for _, val := range initValues {
+				// Convert values to constants if possible
+				if val.IsConstant() {
+					constValues = append(constValues, val)
+				} else {
+					// For non-constant values, we need different handling
+					// This is complex and depends on the context (global vs local)
+					constValues = append(constValues, val)
+				}
+			}
+			
+			// Create array type and constant array
+			var arrayType = llvm.ArrayType(elemType, len(constValues))
+			
+			// Create a global constant array for the initializer list
+			var constArray = llvm.ConstArray(elemType, constValues)
+			var globalVar = llvm.AddGlobal(walker.Info.Mod, arrayType, ".initlist")
+			globalVar.SetInitializer(constArray)
+			globalVar.SetLinkage(llvm.InternalLinkage)
+			
+			ctx.Value = globalVar
 		}
 		return true
 	}
 	walker.WalkFieldDecl = func(ws ast.WalkStage, e *ast.FieldDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
+			// Field declarations are handled as part of struct/union type creation
+			// in symbolTy2llvmType function and WalkRecordDecl
+			// No separate code generation needed for individual fields
 		}
 	}
 	walker.WalkRecordDecl = func(ws ast.WalkStage, e *ast.RecordDecl, ctx *ast.WalkContext) bool {
@@ -804,20 +1204,23 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 	walker.WalkEnumeratorDecl = func(ws ast.WalkStage, e *ast.EnumeratorDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-		} else {
+			// Enumerator constants are handled by the semantic analysis
+			// and stored in the symbol table. No code generation needed
+			// for individual enumerators as they are compile-time constants.
 		}
 	}
 	walker.WalkEnumDecl = func(ws ast.WalkStage, e *ast.EnumDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-
-		} else {
+			// Enum declarations don't generate any LLVM code directly
+			// The enum values are compile-time constants handled by sema
+			// The enum type itself is represented as an integer type
 		}
 	}
 	walker.WalkTypedefDecl = func(ws ast.WalkStage, e *ast.TypedefDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-			//sym := ctx.Scope.LookupSymbol(e.Sym, ast.OrdinaryNS)
-
-		} else {
+			// Typedef declarations don't generate any LLVM code directly
+			// They create type aliases that are resolved during semantic analysis
+			// The actual type mapping is handled by symbolTy2llvmType function
 		}
 	}
 	walker.WalkVariableDecl = func(ws ast.WalkStage, e *ast.VariableDecl, ctx *ast.WalkContext) bool {
@@ -890,7 +1293,9 @@ func MakeLLVMCodeGen() ast.AstWalker {
 	}
 	walker.WalkParamDecl = func(ws ast.WalkStage, e *ast.ParamDecl, ctx *ast.WalkContext) {
 		if ws == ast.WalkerPropagate {
-		} else {
+			// Parameter declarations are handled by WalkFunctionDecl
+			// where function parameters are added to the LLVM function signature
+			// No additional code generation needed here
 		}
 	}
 	walker.WalkFunctionDecl = func(ws ast.WalkStage, e *ast.FunctionDecl, ctx *ast.WalkContext) {
